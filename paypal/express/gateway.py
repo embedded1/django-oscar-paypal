@@ -21,6 +21,7 @@ DO_EXPRESS_CHECKOUT = 'DoExpressCheckoutPayment'
 DO_CAPTURE = 'DoCapture'
 DO_VOID = 'DoVoid'
 REFUND_TRANSACTION = 'RefundTransaction'
+ADDRESS_VERIFY = 'AddressVerify'
 
 SALE, AUTHORIZATION, ORDER = 'Sale', 'Authorization', 'Order'
 
@@ -413,3 +414,11 @@ def refund_txn(txn_id, is_partial=False, amount=None, currency=None):
         params['AMT'] = amount
         params['CURRENCYCODE'] = currency
     return _fetch_response(REFUND_TRANSACTION, params)
+
+def address_txn(email, street, postcode):
+    params = {
+        'EMAIL': email[:255],
+        'STREET': street[:35],
+        'ZIP': postcode[:16]
+    }
+    return _fetch_response(ADDRESS_VERIFY, params)

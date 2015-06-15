@@ -8,19 +8,24 @@ from django.utils.six.moves.urllib.parse import parse_qs
 from paypal import exceptions
 
 
-def post(url, params):
+def post(url, params, headers=None):
     """
     Make a POST request to the URL using the key-value pairs.  Return
     a set of key-value pairs.
 
     :url: URL to post to
     :params: Dict of parameters to include in post payload
+    :headers: Dict of headers
     """
+    if headers is None:
+        headers = {}
+    if 'Content-type' not in headers:
+        headers['Content-type'] = 'text/namevalue; charset=utf-8'
     payload = urlencode(params)
     start_time = time.time()
     response = requests.post(
         url, payload,
-        headers={'content-type': 'text/namevalue; charset=utf-8'})
+        headers=headers)
     if response.status_code != requests.codes.ok:
         raise exceptions.PayPalError("Unable to communicate with PayPal")
 

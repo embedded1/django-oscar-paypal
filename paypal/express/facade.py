@@ -9,7 +9,7 @@ from django.core.exceptions import ImproperlyConfigured
 from paypal.express.models import ExpressTransaction as Transaction
 from paypal.express.gateway import (
     set_txn, get_txn, do_txn, SALE, AUTHORIZATION, ORDER,
-    do_capture, DO_EXPRESS_CHECKOUT, do_void, refund_txn
+    do_capture, DO_EXPRESS_CHECKOUT, do_void, refund_txn, address_txn
 )
 
 
@@ -121,3 +121,13 @@ def void_authorization(token, note=None):
     txn = Transaction.objects.get(token=token,
                                   method=DO_EXPRESS_CHECKOUT)
     return do_void(txn.value('PAYMENTINFO_0_TRANSACTIONID'), note=note)
+
+
+def fetch_address_details(email, shipping_addr):
+    #need to have 5 digits min, we add padding spaces between if needed
+    padding = 5 - len(shipping_addr.postcode)
+    if padding > 0:
+        postcode = shipping_addr.postcode[0:-1] + padding * " " + shipping_addr.postcode[-1]
+    else:
+        postcode = shipping_addr.postcode
+    return address_txn(email, shipping_addr.line1, postcode)
