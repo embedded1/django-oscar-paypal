@@ -1,5 +1,5 @@
 from django.utils.encoding import force_text
-from django.utils.six.moves.urllib.parse import parse_qs
+import urlparse
 from django.utils.translation import ugettext_lazy as _
 
 from django.db import models
@@ -21,7 +21,7 @@ class ResponseModel(models.Model):
         app_label = 'paypal'
 
     def request(self):
-        request_params = parse_qs(self.raw_request)
+        request_params = urlparse.parse_qs(self.raw_request)
         return self._as_dl(request_params)
     request.allow_tags = True
 
@@ -43,7 +43,7 @@ class ResponseModel(models.Model):
 
     @property
     def context(self):
-        return parse_qs(self.raw_response)
+        return urlparse.parse_qs(self.raw_response)
 
     def value(self, key, default=None):
         ctx = self.context

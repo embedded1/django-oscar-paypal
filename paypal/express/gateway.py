@@ -7,7 +7,7 @@ from django.utils.http import urlencode
 from django.utils import six
 from django.utils.translation import ugettext as _
 from django.template.defaultfilters import truncatewords, striptags
-from localflavor.us import us_states
+from django.contrib.localflavor.us import us_states
 
 from . import models, exceptions as express_exceptions
 from paypal import gateway

@@ -3,7 +3,7 @@ import time
 
 from django.utils.encoding import force_text
 from django.utils.http import urlencode
-from django.utils.six.moves.urllib.parse import parse_qs
+import urlparse
 
 from paypal import exceptions
 
@@ -31,7 +31,7 @@ def post(url, params, headers=None):
 
     # Convert response into a simple key-value format
     pairs = {}
-    for key, values in parse_qs(response.content).items():
+    for key, values in urlparse.parse_qs(response.content).items():
         pairs[force_text(key)] = force_text(values[0])
 
     # Add audit information
