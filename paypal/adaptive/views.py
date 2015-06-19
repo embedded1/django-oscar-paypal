@@ -1,5 +1,5 @@
 from oscar.core.loading import get_class
-from decimal import Decimal as D
+from decimal import ROUND_FLOOR, Decimal as D
 from django.http import HttpResponseRedirect
 from django.db.models import get_model
 from django.views import generic
@@ -10,7 +10,7 @@ from paypal.adaptive.exceptions import (
     EmptyBasketException, MissingShippingAddressException,
     MissingShippingMethodException, InvalidBasket)
 from paypal.adaptive.facade import (
-    get_paypal_url, fetch_transaction_details,
+    get_paypal_url_and_pay_key, fetch_transaction_details,
     fetch_account_status, confirm_transaction)
 from paypal.express.facade import fetch_address_details
 from django.contrib import messages
@@ -19,6 +19,9 @@ from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext_lazy as _
 from oscar.apps.payment.exceptions import UnableToTakePayment
 import logging
+import copy
+
+TWO_PLACES = D('0.01')
 
 # Load views dynamically
 PaymentDetailsView = get_class('checkout.views', 'PaymentDetailsView')
@@ -54,14 +57,14 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             if self.as_payment_method:
                 url = reverse('checkout:payment-details')
             else:
-                url = reverse('basket:summary')
+                url = reverse('customer:pending-packages')
             return url
         except InvalidBasket as e:
             messages.warning(self.request, six.text_type(e))
-            return reverse('basket:summary')
+            return reverse('customer:pending-packages')
         except EmptyBasketException:
             messages.error(self.request, _("Your basket is empty"))
-            return reverse('basket:summary')
+            return reverse('customer:pending-packages')
         except MissingShippingAddressException:
             messages.error(
                 self.request, _("A shipping address must be specified"))
@@ -80,41 +83,101 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
             return url
 
+    def store_pay_key_in_session(self, pay_key):
+        """
+        The redirect url we pass to PayPal contains the pay key of this transaction
+        We need to store that key in session for the ExecutePayment command
+        Unfortunately, PayPal doesn't send this key back on the return url
+        """
+        self.checkout_session.store_pay_key(pay_key)
+
+    def get_selected_shipping_method(self, basket):
+        package = basket.get_package()
+        if package is None:
+            logger.error("Paypal Adaptive Payments: couldn't get package"
+                            " from basket for partner share calculations")
+            raise PayPalError()
+        key = package.upc
+        #make special key for return to store checkout where we need to
+        #show only domestic methods
+        if self.checkout_session.is_return_to_store_enabled():
+            key += "_return-to-store"
+        repo = self.checkout_session.get_shipping_repository(key)
+
+        #we should never get here - but if we do show error message and redirect to
+        #pending packages page
+        if not repo:
+            logger.error("Paypal Adaptive Payments: We could not fetch shipping repository from cache")
+            raise PayPalError()
+
+        #return the selected shipping method
+        code = self.checkout_session.shipping_method_code(basket)
+        return repo.get_shipping_method_by_code(code)
+
+    def calc_partner_share(self, basket):
+        """
+        Partner's share is calculated as follows:
+        1 - Payment for the shipping is made through partner's account so we need to pay him back
+        2 - % of total revenue
+        3 - Total revenue = order total - shipping cost - insurance cost
+        """
+        selected_method = self.get_selected_shipping_method(basket)
+        if selected_method is None:
+            logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
+
+        shipping_charge = selected_method.ship_charge_excl_revenue
+        insurance_charge = selected_method.ins_charge_excl_revenue
+        easypost_charge = D('0.05')
+        total_revenue = basket.total_incl_tax - shipping_charge - insurance_charge - easypost_charge
+        partner_share = (total_revenue * D(settings.LOGISTIC_PARTNER_REVENUE)) + shipping_charge
+        return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
+
+    def store_partner_share(self, share):
+        """
+        we save partner's share in session so we could audit it in db
+        once payment completes
+        """
+        self.checkout_session.store_partner_share(share)
+
+    def get_receivers(self, basket):
+        """
+        For each payment we need to calculate partner's share
+        Primary receiver amount is equal to basket total
+        Partner share amount is: shipping costs + profit percentage
+        """
+        receivers = copy.deepcopy(settings.PAYPAL_ADAPTIVE_PAYMENTS_RECEIVERS_TEMPLATE)
+        for r in receivers:
+            if r['is_primary']:
+                r['amount'] = basket.total_incl_tax
+            else:
+                partner_share = self.calc_partner_share(basket)
+                r['amount'] = partner_share
+                self.store_partner_share(partner_share)
+        return receivers
+
+
     def _get_redirect_url(self, basket, **kwargs):
         if basket.is_empty:
             raise EmptyBasketException()
 
         params = {
             'basket': basket,
-            'shipping_methods': []          # setup a default empty list
-        }                                   # to support no_shipping
-
-        user = self.request.user
-        if self.as_payment_method:
-            if basket.is_shipping_required():
-                # Only check for shipping details if required.
-                shipping_addr = self.get_shipping_address(basket)
-                if not shipping_addr:
-                    raise MissingShippingAddressException()
-
-                shipping_method = self.get_shipping_method(
-                    basket, shipping_addr)
-                if not shipping_method:
-                    raise MissingShippingMethodException()
-
-                params['shipping_address'] = shipping_addr
+            'user': self.request.user
+        }
 
         if settings.DEBUG:
             # Determine the localserver's hostname to use when
             # in testing mode
             params['host'] = self.request.META['HTTP_HOST']
 
-        if user.is_authenticated():
-            params['user'] = user
-
         params['paypal_params'] = self._get_paypal_params()
 
-        return get_paypal_url(**params)
+        params['receivers'] = self.get_receivers(basket)
+
+        redirect_url, pay_key = get_paypal_url_and_pay_key(**params)
+        self.store_pay_key_in_session(pay_key)
+        return redirect_url
+
 
     def _get_paypal_params(self):
         """
@@ -125,7 +188,17 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
 class SuccessResponseView(PaymentDetailsView):
     template_name_preview = 'paypal/adaptive/preview.html'
+    template_name = template_name_preview
     preview = True
+
+    def get_pay_key(self):
+        self.pay_key = self.checkout_session.get_pay_key()
+        if self.pay_key is None:
+            # Manipulation - redirect to basket page with warning message
+            logger.warning("Missing pay key in session")
+            messages.error(
+                self.request,
+                _("Unable to determine PayPal transaction details"))
 
     def get(self, request, *args, **kwargs):
         """
@@ -133,27 +206,20 @@ class SuccessResponseView(PaymentDetailsView):
         these details to show a preview of the order with a 'submit' button to
         place it.
         """
-        try:
-            self.pay_key = request.GET['payKey']
-        except KeyError:
-            # Manipulation - redirect to basket page with warning message
-            logger.warning("Missing GET params on success response page")
-            messages.error(
-                self.request,
-                _("Unable to determine PayPal transaction details"))
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
+        #try:
+        #    self.txn = fetch_transaction_details(self.pay_key)
+        #except PayPalError as e:
+        #    logger.warning(
+        #        "Unable to fetch transaction details for pay key %s: %s",
+        #        self.pay_key, e)
+        #    messages.error(
+        #        self.request,
+        #        _("A problem occurred communicating with PayPal - please try again later"))
+        #    return HttpResponseRedirect(reverse('customer:pending-packages'))
 
-        try:
-            self.txn = fetch_transaction_details(self.pay_key)
-        except PayPalError as e:
-            logger.warning(
-                "Unable to fetch transaction details for pay key %s: %s",
-                self.pay_key, e)
-            messages.error(
-                self.request,
-                _("A problem occurred communicating with PayPal - please try again later"))
+        self.get_pay_key()
+        if self.pay_key is None:
             return HttpResponseRedirect(reverse('customer:pending-packages'))
-
         # Reload frozen basket which is specified in the URL
         kwargs['basket'] = self.load_frozen_basket(kwargs['basket_id'])
         if not kwargs['basket']:
@@ -207,18 +273,6 @@ class SuccessResponseView(PaymentDetailsView):
 
         return basket
 
-    def get_context_data(self, **kwargs):
-        ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
-
-        if not hasattr(self, 'pay_key'):
-            return ctx
-
-        # This context generation only runs when in preview mode
-        ctx.update({
-            'pay_key': self.pay_key
-        })
-
-        return ctx
 
     def post(self, request, *args, **kwargs):
         """
@@ -227,17 +281,13 @@ class SuccessResponseView(PaymentDetailsView):
         We fetch the txn details again and then proceed with oscar's standard
         payment details view for placing the order.
         """
+        self.get_pay_key()
+        if self.pay_key is None:
+            return HttpResponseRedirect(reverse('customer:pending-packages'))
         error_msg = _(
             "A problem occurred communicating with PayPal "
             "- please try again later"
         )
-        try:
-            self.pay_key = request.POST['pay_key']
-        except KeyError:
-            # Probably suspicious manipulation if we get here
-            messages.error(self.request, error_msg)
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-
         try:
             self.txn = fetch_transaction_details(self.pay_key)
         except PayPalError:
@@ -254,19 +304,24 @@ class SuccessResponseView(PaymentDetailsView):
         submission = self.build_submission(basket=basket)
         return self.submit(**submission)
 
-    def build_submission(self, **kwargs):
-        submission = super(
-            SuccessResponseView, self).build_submission(**kwargs)
-        # Pass PP params
-        submission['payment_kwargs']['pay_key'] = self.pay_key
-        submission['payment_kwargs']['txn'] = self.txn
-        return submission
-
     # Warning: This method can be removed when we drop support for Oscar 0.6
     def get_error_response(self):
         # We bypass the normal session checks for shipping address and shipping
         # method as they don't apply here.
         pass
+
+    def get_context_data(self, **kwargs):
+        ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
+        if 'error' in ctx:
+            messages.error(self.request, ctx['error'])
+        return ctx
+
+    def get_partner_share(self):
+        """
+        We would like to save in db the amount we've payed our partner
+        we keep that saved under the 'amount_debited' attribute
+        """
+        return self.checkout_session.get_partner_share()
 
     def handle_payment(self, order_number, total, **kwargs):
         """
@@ -274,25 +329,28 @@ class SuccessResponseView(PaymentDetailsView):
         method to capture the money from the initial transaction.
         """
         try:
-            confirm_txn = confirm_transaction(kwargs['pay_key'])
+            confirm_txn = confirm_transaction(self.pay_key)
         except PayPalError:
-            raise UnableToTakePayment()
-        if not confirm_txn.is_successful:
-            raise UnableToTakePayment()
+            raise UnableToTakePayment(
+                _("A problem occurred communicating with PayPal "
+                "- please try again later"))
 
-        payment_details_txn = kwargs['txn']
-        #we stored the amount in the memo attribute for fast retrieval
-        amount = D(payment_details_txn.value('memo'))
+        payment_details_txn = self.txn
         # Record payment source and event
+        partner_share = self.get_partner_share()
         source_type, is_created = SourceType.objects.get_or_create(
             name='PayPal')
         source = Source(source_type=source_type,
                         currency=payment_details_txn.currency,
-                        amount_allocated=amount,
-                        amount_debited=amount)
+                        amount_allocated=total,
+                        amount_debited=partner_share)
         self.add_payment_source(source)
-        self.add_payment_event('Settled', amount,
+        self.add_payment_event('Settled', total,
                                reference=confirm_txn.correlation_id)
+        #delete partner's share from session
+        self.checkout_session.delete_partner_share()
+        #delete the pay_key from session
+        self.checkout_session.delete_pay_key()
 
 
     def validate_shipping_address(self, email, shipping_address):
@@ -426,10 +484,9 @@ class CancelResponseView(RedirectView):
         basket = get_object_or_404(Basket, id=kwargs['basket_id'],
                                    status=Basket.FROZEN)
         basket.thaw()
-        logger.info("Payment cancelled (token %s) - basket #%s thawed",
-                    request.GET.get('token', '<no token>'), basket.id)
+        logger.info("Payment cancelled - basket #%s thawed", basket.id)
         return super(CancelResponseView, self).get(request, *args, **kwargs)
 
     def get_redirect_url(self, **kwargs):
         messages.error(self.request, _("PayPal transaction cancelled"))
-        return reverse('basket:summary')
+        return reverse('customer:pending-packages')

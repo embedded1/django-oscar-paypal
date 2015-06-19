@@ -2,13 +2,12 @@ from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.urlresolvers import reverse
 from paypal.adaptive.gateway import (
-    pay, payment_details, set_payment_option,
+    pay, payment_details, #set_payment_option,
     execute_payment, get_verified_status
 )
 
 
-def get_paypal_url(basket, user=None, shipping_address=None,
-                   host=None, scheme=None, paypal_params=None):
+def get_paypal_url_and_pay_key(receivers, basket, user, host=None, scheme=None, paypal_params=None):
     """
     Return the URL for a PayPal Adaptive Payment transaction.
 
@@ -31,19 +30,15 @@ def get_paypal_url(basket, user=None, shipping_address=None,
             'basket_id': basket.id}))
 
     #first create the Pay transaction
-    txn = pay(receivers=settings.PAYPAL_RECEIVERS,
+    txn = pay(receivers=receivers,
               currency=currency,
               return_url=return_url,
               cancel_url=cancel_url,
-              sender_email=user.email if user else None)
+              sender_email=user.email)
 
-    #then set the shipping address and order items
-    set_payment_option(basket=basket,
-                       pay_key=txn.pay_key,
-                       shipping_address=shipping_address)
 
-    #now redirect the customer to PayPal to for payment
-    return txn.redirect_url
+    #now redirect the customer to PayPal to complete the payment
+    return txn.redirect_url, txn.pay_key
 
 
 def fetch_transaction_details(pay_key):

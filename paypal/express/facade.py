@@ -130,4 +130,10 @@ def fetch_address_details(email, shipping_addr):
         postcode = shipping_addr.postcode[0:-1] + padding * " " + shipping_addr.postcode[-1]
     else:
         postcode = shipping_addr.postcode
-    return address_txn(email, shipping_addr.line1, postcode)
+    txn = address_txn(email, shipping_addr.line1, postcode)
+    return (
+        txn.value('CONFIRMATIONCODE'),
+        txn.value('STREETMATCH'),
+        txn.value('ZIPMATCH'),
+        txn.value('COUNTRYCODE')
+    )

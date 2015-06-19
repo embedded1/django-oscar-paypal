@@ -24,6 +24,10 @@ Fees = type('Fees', (), {
     'SECONDARY_ONLY': 'SECONDARYONLY',
 })
 
+#PayPal APIs
+Adaptive_Payments = 'AdaptivePayments'
+Adaptive_Accounts = 'AdaptiveAccounts'
+
 # PayPal methods
 Pay = 'Pay'
 Payment_Details = 'PaymentDetails'
@@ -44,61 +48,62 @@ def payment_details(pay_key):
     params = [("payKey", pay_key)]
     return _request(Payment_Details, params)
 
-def set_payment_option(basket, pay_key, shipping_address=None):
+def set_payment_option(basket, pay_key, receiver_email, shipping_address=None):
     """
     Submit shipping address and order items to PayPal
     """
 
     params = [
         ("payKey", pay_key),
-        ("SenderOptions.addressOverride", 'false')
+        #("senderOptions.addressOverride", 'false'),
+        ('receiverOptions[0].receiver.email', receiver_email),
     ]
 
-    if shipping_address:
-        #add shipping address
-        params['SenderOptions.shippingAddress.addresseeName'] = shipping_address.name
-        params['SenderOptions.shippingAddress.street1'] = shipping_address.line1
-        params['SenderOptions.shippingAddress.street2'] = shipping_address.line2
-        params['SenderOptions.shippingAddress.city'] = shipping_address.line4
-        params['SenderOptions.shippingAddress.state'] = shipping_address.state
-        params['SenderOptions.shippingAddress.zip'] = shipping_address.postcode
-        params['SenderOptions.shippingAddress.country'] = shipping_address.country.iso_3166_1_a2
+    #if shipping_address:
+    #    #add shipping address
+    #    params.append(('senderOptions.shippingAddress.addresseeName', shipping_address.name))
+    #    params.append(('senderOptions.shippingAddress.street1', shipping_address.line1))
+    #    params.append(('senderOptions.shippingAddress.street2', shipping_address.line2 or ' '))
+    #    params.append(('senderOptions.shippingAddress.city', shipping_address.line4))
+    #    params.append(('senderOptions.shippingAddress.state', shipping_address.state or ' '))
+    #    params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode or ' '))
+    #    params.append(('senderOptions.shippingAddress.country', shipping_address.country.iso_3166_1_a2))
 
     index = 0
     for index, line in enumerate(basket.all_lines()):
         product = line.product
-        params['receiverOptions[0].invoiceData.item[%d].name' % index] = product.get_title()
-        params['receiverOptions[0].invoiceData.item[%d].identifier' % index] = (product.upc if
-                                                         product.upc else '')
+        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, product.get_title()))
+        params.append(('receiverOptions[0].invoiceData.item[%d].identifier' % index, product.upc if
+                                                         product.upc else ''))
         # Note, we don't include discounts here - they are handled as separate
         # lines - see below
-        params['receiverOptions[0].invoiceData.item[%d].price' % index] = _format_currency(
-            line.unit_price_incl_tax)
-        params['receiverOptions[0].invoiceData.item[%d].itemCount' % index] = line.quantity
+        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+            line.unit_price_incl_tax)))
+        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, line.quantity))
 
     # Iterate over the 3 types of discount that can occur
     for discount in basket.offer_discounts:
         index += 1
         name = _("Special Offer: %s") % discount['name']
-        params['receiverOptions[0].invoiceData.item[%d].name' % index] = name
-        params['receiverOptions[0].invoiceData.item[%d].price' % index] = _format_currency(
-            -discount['discount'])
-        params['receiverOptions[0].invoiceData.item[%d].itemCount' % index] = 1
+        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
+        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+            -discount['discount'])))
+        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
     for discount in basket.voucher_discounts:
         index += 1
         name = "%s (%s)" % (discount['voucher'].name,
                             discount['voucher'].code)
-        params['receiverOptions[0].invoiceData.item[%d].name' % index] = name
-        params['receiverOptions[0].invoiceData.item[%d].price' % index] = _format_currency(
-            -discount['discount'])
-        params['receiverOptions[0].invoiceData.item[%d].itemCount' % index] = 1
+        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
+        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+            -discount['discount'])))
+        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
     for discount in basket.shipping_discounts:
         index += 1
         name = _("Shipping Offer: %s") % discount['name']
-        params['receiverOptions[0].invoiceData.item[%d].name' % index] = name
-        params['receiverOptions[0].invoiceData.item[%d].price' % index] = _format_currency(
-            -discount['discount'])
-        params['receiverOptions[0].invoiceData.item[%d].itemCount' % index] = 1
+        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
+        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+            -discount['discount'])))
+        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
 
     return _request(Set_Payment_Options, params)
 
@@ -141,15 +146,16 @@ def pay(receivers, currency, return_url, cancel_url,
     # Add optional params
     if fees_payer:
         params.append(('feesPayer', fees_payer))
+
     if tracking_id:
         params.append(('trackingId', tracking_id))
 
-    #save order total in memo if not provided so it couldn't be fetched
-    #easily down the road
-    params.append(('memo', memo if memo else total))
+    if memo:
+        params.append(('memo', memo))
 
     if sender_email:
         params.append(('senderEmail', sender_email))
+
     if ipn_url:
         params.append(('ipnNotificationUrl', ipn_url))
 
@@ -164,23 +170,23 @@ def execute_payment(pay_key):
     return _request(Execute_Payment, params)
 
 
-def get_verified_status(fist_name, last_name, email):
+def get_verified_status(first_name, last_name, email):
     """
     Fetch payer status and personal details
     """
     params = [
-        ("accountIdentifier.emailAddress", email),
-        ("firstName", fist_name),
-        ("lastName.emailAddress", last_name),
+        ("emailAddress", email),
+        ("firstName", first_name),
+        ("lastName", last_name),
         ("matchCriteria", "NAME")
     ]
 
-    txn = _request(Get_Verified_Status, params)
+    txn = _request(Get_Verified_Status, params, api=Adaptive_Accounts)
     return txn.value("accountStatus")
 
 
 
-def _request(action, params, headers=None, txn_fields=None):
+def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=None):
     """
     Make a request to PayPal
     """
@@ -206,12 +212,12 @@ def _request(action, params, headers=None, txn_fields=None):
     params.extend(common_params)
 
     if getattr(settings, 'PAYPAL_SANDBOX_MODE', False):
-        url = 'https://svcs.sandbox.paypal.com/AdaptivePayments/%s'
+        url = 'https://svcs.sandbox.paypal.com/%s/%s'
         is_sandbox = True
     else:
-        url = 'https://svcs.paypal.com/AdaptivePayments/%s'
+        url = 'https://svcs.paypal.com/%s/%s'
         is_sandbox = False
-    url = url % action
+    url = url % (api, action)
 
     # We use an OrderedDict as the key-value pairs have to be in the correct
     # order(!).  Otherwise, PayPal returns error 'Invalid request: {0}'
