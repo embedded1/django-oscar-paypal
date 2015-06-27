@@ -3,7 +3,7 @@ from django.contrib.sites.models import Site
 from django.core.urlresolvers import reverse
 from paypal.adaptive.gateway import (
     pay, payment_details, #set_payment_option,
-    execute_payment, get_verified_status
+    execute_payment, get_account_info
 )
 
 
@@ -47,8 +47,8 @@ def fetch_transaction_details(pay_key):
     """
     return payment_details(pay_key)
 
-def fetch_account_status(first_name, last_name, email):
-    return get_verified_status(first_name, last_name, email)
+def fetch_account_info(first_name, last_name, email):
+    return get_account_info(first_name, last_name, email)
 
 def confirm_transaction(pay_key):
     return execute_payment(pay_key)

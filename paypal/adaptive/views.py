@@ -1,6 +1,6 @@
 from oscar.core.loading import get_class
 from decimal import ROUND_FLOOR, Decimal as D
-from django.http import HttpResponseRedirect
+from django.http import Http404, HttpResponseRedirect, HttpResponse
 from django.db.models import get_model
 from django.views import generic
 from django.shortcuts import get_object_or_404
@@ -8,10 +8,10 @@ from django.conf import settings
 from paypal.exceptions import PayPalError
 from paypal.adaptive.exceptions import (
     EmptyBasketException, MissingShippingAddressException,
-    MissingShippingMethodException, InvalidBasket)
+    MissingShippingMethodException, InvalidBasket, PayPalFailedValidationException)
 from paypal.adaptive.facade import (
     get_paypal_url_and_pay_key, fetch_transaction_details,
-    fetch_account_status, confirm_transaction)
+    fetch_account_info, confirm_transaction)
 from paypal.express.facade import fetch_address_details
 from django.contrib import messages
 from django.utils import six
@@ -30,6 +30,7 @@ Repository = get_class('shipping.repository', 'Repository')
 Applicator = get_class('offer.utils', 'Applicator')
 Selector = get_class('partner.strategy', 'Selector')
 Source = get_model('payment', 'Source')
+Order = get_model('order', 'Order')
 SourceType = get_model('payment', 'SourceType')
 Basket = get_model('basket', 'Basket')
 logger = logging.getLogger('paypal.adaptive')
@@ -73,6 +74,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             messages.error(
                 self.request, _("A shipping method must be specified"))
             return reverse('checkout:shipping-method')
+        except PayPalFailedValidationException:
+            return reverse('customer:pending-packages')
         else:
             # Transaction successfully registered with PayPal.  Now freeze the
             # basket so it can't be edited while the customer is on the PayPal
@@ -160,6 +163,25 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         if basket.is_empty:
             raise EmptyBasketException()
 
+        user = self.request.user
+        customer_shipping_address = self.get_shipping_address(basket)
+        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
+
+        #check that shipping address exists
+        if not customer_shipping_address and not is_return_to_merchant:
+            # we could not get shipping address - redirect to basket page with warning message
+            logger.warning("customer's shipping address not found while verifying PayPal account")
+            self.unfreeze_basket(kwargs['basket_id'])
+            raise MissingShippingMethodException()
+
+        #Run some validations on the user
+        if not self.validate_txn(sender_email=user.email,
+                                 sender_first_name=user.first_name,
+                                 sender_last_name=user.last_name,
+                                 is_return_to_merchant=is_return_to_merchant,
+                                 sender_shipping_address=customer_shipping_address):
+            raise PayPalFailedValidationException()
+
         params = {
             'basket': basket,
             'user': self.request.user
@@ -185,173 +207,70 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         return {}
 
+    def validate_txn(self, sender_email, sender_first_name,
+                     sender_last_name, is_return_to_merchant, sender_shipping_address):
 
-class SuccessResponseView(PaymentDetailsView):
-    template_name_preview = 'paypal/adaptive/preview.html'
-    template_name = template_name_preview
-    preview = True
+        #make sure user has verified Paypal account and account data is valid
+        if not self.validate_account_status(sender_email, sender_first_name, sender_last_name):
+            return False
 
-    def get_pay_key(self):
-        self.pay_key = self.checkout_session.get_pay_key()
-        if self.pay_key is None:
-            # Manipulation - redirect to basket page with warning message
-            logger.warning("Missing pay key in session")
-            messages.error(
-                self.request,
-                _("Unable to determine PayPal transaction details"))
+        #check shipping address only for non merchant addresses
+        #this check is not needed for US addresses where the package is returned to store
+        if not is_return_to_merchant:
+            if not self.validate_shipping_address(sender_email, sender_shipping_address):
+                return False
 
-    def get(self, request, *args, **kwargs):
-        """
-        Fetch details about the successful transaction from PayPal.  We use
-        these details to show a preview of the order with a 'submit' button to
-        place it.
-        """
-        #try:
-        #    self.txn = fetch_transaction_details(self.pay_key)
-        #except PayPalError as e:
-        #    logger.warning(
-        #        "Unable to fetch transaction details for pay key %s: %s",
-        #        self.pay_key, e)
-        #    messages.error(
-        #        self.request,
-        #        _("A problem occurred communicating with PayPal - please try again later"))
-        #    return HttpResponseRedirect(reverse('customer:pending-packages'))
+        #all went fine continue with payment
+        return True
 
-        self.get_pay_key()
-        if self.pay_key is None:
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-        # Reload frozen basket which is specified in the URL
-        kwargs['basket'] = self.load_frozen_basket(kwargs['basket_id'])
-        if not kwargs['basket']:
-            logger.warning(
-                "Unable to load frozen basket with ID %s", kwargs['basket_id'])
-            messages.error(
-                self.request,
-                _("No basket was found that corresponds to your "
-                  "PayPal transaction"))
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
+    def get_account_status(self, first_name, last_name, email):
+        return fetch_account_info(first_name, last_name, email)
 
-        basket = request.basket
-        user = self.request.user
-        customer_shipping_address = self.get_shipping_address(basket)
-        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
-
-        #check that shipping address exists
-        if not customer_shipping_address and not is_return_to_merchant:
-            # we could not get shipping address - redirect to basket page with warning message
-            logger.warning("customer's shipping address not found while verifying PayPal account")
-            messages.error(self.request, _("No shipping address found, please try again."))
-            self.unfreeze_basket(kwargs['basket_id'])
-            return HttpResponseRedirect(reverse('checkout:shipping-address'))
-
-        if not self.validate_txn(sender_email=user.email,
-                                 sender_first_name=user.first_name,
-                                 sender_last_name=user.last_name,
-                                 is_return_to_merchant=is_return_to_merchant,
-                                 sender_shipping_address=customer_shipping_address):
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-
-        logger.info(
-            "Basket #%s - showing preview with pay key %s",
-            kwargs['basket'].id, self.pay_key)
-
-        return super(SuccessResponseView, self).get(request, *args, **kwargs)
-
-    def load_frozen_basket(self, basket_id):
-        # Lookup the frozen basket that this txn corresponds to
+    def validate_account_status(self, sender_email, sender_first_name, sender_last_name):
+        #Get account info from PP
         try:
-            basket = Basket.objects.get(id=basket_id, status=Basket.FROZEN)
-        except Basket.DoesNotExist:
-            return None
-
-        # Assign strategy to basket instance
-        if Selector:
-            basket.strategy = Selector().strategy(self.request)
-
-        # Re-apply any offers
-        Applicator().apply(self.request, basket)
-
-        return basket
-
-
-    def post(self, request, *args, **kwargs):
-        """
-        Place an order.
-
-        We fetch the txn details again and then proceed with oscar's standard
-        payment details view for placing the order.
-        """
-        self.get_pay_key()
-        if self.pay_key is None:
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-        error_msg = _(
-            "A problem occurred communicating with PayPal "
-            "- please try again later"
-        )
-        try:
-            self.txn = fetch_transaction_details(self.pay_key)
+            (pp_account_status,
+             pp_account_email,
+             pp_account_first_name,
+             pp_account_last_name) = self.get_account_status(first_name=sender_first_name,
+                                                             last_name=sender_last_name,
+                                                             email=sender_email)
         except PayPalError:
-            # Unable to fetch txn details from PayPal - we have to bail out
-            messages.error(self.request, error_msg)
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
+            #we couldn't get account status, this is probably because the credentials
+            #don't match the data on file at PayPal
+            logger.error("Cannot determine PayPal account status: %s %s" % (sender_first_name, sender_last_name))
+            # unverified payer - redirect to pending packages page with error message
+            messages.error(self.request, _("Please make sure your USendHome account name and email address"
+                                           " match the ones on file at PayPal."))
+            return False
 
-        # Reload frozen basket which is specified in the URL
-        basket = self.load_frozen_basket(kwargs['basket_id'])
-        if not basket:
-            messages.error(self.request, error_msg)
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
+        if pp_account_status.lower() != 'verified':
+            logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
+            # unverified payer - redirect to pending packages page with error message
+            messages.error(self.request, _("Your PayPal account isn't verified, please verify your account before"
+                                           " proceeding to checkout."))
+            return False
 
-        submission = self.build_submission(basket=basket)
-        return self.submit(**submission)
 
-    # Warning: This method can be removed when we drop support for Oscar 0.6
-    def get_error_response(self):
-        # We bypass the normal session checks for shipping address and shipping
-        # method as they don't apply here.
-        pass
+        #make sure the paypal email address is identical to the email address the customer
+        #uses on site
+        if sender_email != pp_account_email:
+            logger.error("paypal email address %s does not match on site email address: %s"
+                         % (pp_account_email, sender_email))
+            messages.error(self.request, _("PayPal email address does not match the email address on USendHome.com."
+                                           " Please edit your settings and try again."))
+            return False
 
-    def get_context_data(self, **kwargs):
-        ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
-        if 'error' in ctx:
-            messages.error(self.request, ctx['error'])
-        return ctx
+        #check that the paypal account name is same as the one on site
+        if pp_account_first_name != sender_first_name or \
+           pp_account_last_name != sender_last_name:
+            logger.error("PayPal account name does not match USendHome account name: %s %s, paypal name: %s %s"
+                         % (sender_first_name, sender_last_name, pp_account_first_name, pp_account_last_name))
+            messages.error(self.request, _("PayPal account name doesn't match the account name at USendHome.com<br/>"
+                                           "Please edit your settings and try again."), extra_tags='safe block')
+            return False
 
-    def get_partner_share(self):
-        """
-        We would like to save in db the amount we've payed our partner
-        we keep that saved under the 'amount_debited' attribute
-        """
-        return self.checkout_session.get_partner_share()
-
-    def handle_payment(self, order_number, total, **kwargs):
-        """
-        Complete payment with PayPal - this calls the 'ExecutePayment'
-        method to capture the money from the initial transaction.
-        """
-        try:
-            confirm_txn = confirm_transaction(self.pay_key)
-        except PayPalError:
-            raise UnableToTakePayment(
-                _("A problem occurred communicating with PayPal "
-                "- please try again later"))
-
-        payment_details_txn = self.txn
-        # Record payment source and event
-        partner_share = self.get_partner_share()
-        source_type, is_created = SourceType.objects.get_or_create(
-            name='PayPal')
-        source = Source(source_type=source_type,
-                        currency=payment_details_txn.currency,
-                        amount_allocated=total,
-                        amount_debited=partner_share)
-        self.add_payment_source(source)
-        self.add_payment_event('Settled', total,
-                               reference=confirm_txn.correlation_id)
-        #delete partner's share from session
-        self.checkout_session.delete_partner_share()
-        #delete the pay_key from session
-        self.checkout_session.delete_pay_key()
-
+        return True
 
     def validate_shipping_address(self, email, shipping_address):
         try:
@@ -403,45 +322,147 @@ class SuccessResponseView(PaymentDetailsView):
         return True
 
 
+class SuccessResponseView(PaymentDetailsView):
+    template_name_preview = 'paypal/adaptive/thank_you.html'
+    template_name = template_name_preview
+    preview = True
+    err_msg = _("A problem occurred communicating with PayPal "
+        "- please try again later")
+
+    def get_pay_key(self):
+        self.pay_key = self.checkout_session.get_pay_key()
+        if self.pay_key is None:
+            # Manipulation - redirect to basket page with warning message
+            logger.warning("Missing pay key in session")
+            messages.error(
+                self.request,
+                _("Unable to determine PayPal transaction details"))
+
+    def load_frozen_basket(self, basket_id):
+        # Lookup the frozen basket that this txn corresponds to
+        try:
+            basket = Basket.objects.get(id=basket_id, status=Basket.FROZEN)
+        except Basket.DoesNotExist:
+            return None
+
+        # Assign strategy to basket instance
+        if Selector:
+            basket.strategy = Selector().strategy(self.request)
+
+        # Re-apply any offers
+        Applicator().apply(self.request, basket)
+
+        return basket
+
+
+    def post(self, request, *args, **kwargs):
+        """
+        Place an order.
+
+        We fetch the txn details again and then proceed with oscar's standard
+        payment details view for placing the order.
+        """
+        self.get_pay_key()
+        if self.pay_key is None:
+            return HttpResponseRedirect(reverse('customer:pending-packages'))
+        error_msg = _(
+            "A problem occurred communicating with PayPal "
+            "- please try again later"
+        )
+        #try:
+            #self.txn = fetch_transaction_details(self.pay_key)
+        #except PayPalError:
+        #    # Unable to fetch txn details from PayPal - we have to bail out
+        #    messages.error(self.request, error_msg)
+        #    return HttpResponseRedirect(reverse('customer:pending-packages'))
+
+        # Reload frozen basket which is specified in the URL
+        basket = self.load_frozen_basket(kwargs['basket_id'])
+        if not basket:
+            messages.error(self.request, error_msg)
+            return HttpResponseRedirect(reverse('customer:pending-packages'))
+
+        submission = self.build_submission(basket=basket)
+        self.submit(**submission)
+        return HttpResponse(status=204)
+
+    # Warning: This method can be removed when we drop support for Oscar 0.6
+    def get_error_response(self):
+        # We bypass the normal session checks for shipping address and shipping
+        # method as they don't apply here.
+        pass
+
+    def get_context_data(self, **kwargs):
+        ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
+        if 'error' in ctx:
+            messages.error(self.request, ctx['error'])
+        #We must provide order and frozen basket id to render the thank you template
+        ctx['order'] = self.get_order()
+        ctx['basket_id'] = self.kwargs['basket_id']
+        return ctx
+
+    def get_partner_share(self):
+        """
+        We would like to save in db the amount we've payed our partner
+        we keep that saved under the 'amount_debited' attribute
+        """
+        return self.checkout_session.get_partner_share()
+
+    def get_order(self):
+        # We allow superusers to force an order thankyou page for testing
+        order = None
+        if self.request.user.is_superuser:
+            if 'order_number' in self.request.GET:
+                order = Order._default_manager.get(
+                    number=self.request.GET['order_number'])
+            elif 'order_id' in self.request.GET:
+                order = Order._default_manager.get(
+                    id=self.request.GET['order_id'])
+
+        if not order:
+            if 'checkout_order_id' in self.request.session:
+                order = Order._default_manager.get(
+                    pk=self.request.session['checkout_order_id'])
+            else:
+                raise Http404(_("No order found"))
+
+        return order
+
+    def handle_payment(self, order_number, total, **kwargs):
+        """
+        Complete payment with PayPal - this calls the 'ExecutePayment'
+        method to capture the money from the initial transaction.
+        """
+        try:
+            details_txn = fetch_transaction_details(self.pay_key)
+        except PayPalError:
+            raise UnableToTakePayment(self.err_msg)
+
+        #make sure paymentExecuteStatus is not ERROR
+        #if confirm_txn.value('paymentExecStatus') == 'ERROR':
+        #    raise UnableToTakePayment(self.err_msg)
+
+        #payment_details_txn = self.txn
+        # Record payment source and event
+        partner_share = self.get_partner_share()
+        source_type, is_created = SourceType.objects.get_or_create(
+            name='PayPal')
+        source = Source(source_type=source_type,
+                        currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
+                        amount_allocated=total.incl_tax,
+                        amount_debited=partner_share)
+        self.add_payment_source(source)
+        self.add_payment_event('Settled', total.incl_tax,
+                               reference=details_txn.correlation_id)
+        #delete partner's share from session
+        self.checkout_session.delete_partner_share()
+        #delete the pay_key from session
+        self.checkout_session.delete_pay_key()
+
+
     def unfreeze_basket(self, basket_id):
         basket = self.load_frozen_basket(basket_id)
         basket.thaw()
-
-    def get_account_status(self, first_name, last_name, email):
-        return fetch_account_status(first_name, last_name, email)
-
-
-    def validate_txn(self, sender_email, sender_first_name,
-                     sender_last_name, is_return_to_merchant, sender_shipping_address):
-        #check that the buyer is verified
-        try:
-            account_status = self.get_account_status(first_name=sender_first_name,
-                                                     last_name=sender_last_name,
-                                                     email=sender_email)
-        except PayPalError:
-            #we couldn't get account status, this is probably becasue the credentials
-            #don't match the data on file at PayPal
-            logger.error("We couldn't fetch Paypal account status for user: %s %s" % (sender_first_name, sender_last_name))
-            messages.error(self.request, _("Email address, first and last names must match the information on"
-                                           " file at PayPal. Please edit your settings and try again."))
-            return False
-
-        if account_status.lower() != 'verified':
-            logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
-            # unverified payer - redirect to pending packages page with error message
-            messages.error(self.request, _("Your PayPal account isn't verified, please verify your account before"
-                                           " proceeding to checkout."))
-            return False
-
-
-        #check shipping address only for non merchant addresses
-        #this check is not needed for US addresses where the package is returned to store
-        if not is_return_to_merchant:
-            if not self.validate_shipping_address(sender_email, sender_shipping_address):
-                return False
-
-        #all went fine continue with payment
-        return True
 
 
     def get_shipping_method(self, basket, shipping_address=None, **kwargs):

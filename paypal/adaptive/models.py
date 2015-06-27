@@ -42,7 +42,7 @@ class AdaptiveTransaction(base.ResponseModel):
     @property
     def redirect_url(self):
         if self.is_sandbox:
-            url = 'https://www.sandbox.paypal.com/webscr?cmd=_ap-payment&paykey=%s'
+            url = 'https://www.sandbox.paypal.com/cgi-bin/webscr?cmd=_ap-payment&paykey=%s'
         else:
-            url = 'https://www.paypal.com/webscr?cmd=_ap-payment&paykey=%s'
+            url = 'https://www.paypal.com/cgi-bin/webscr?cmd=_ap-payment&paykey=%s'
         return url % self.pay_key

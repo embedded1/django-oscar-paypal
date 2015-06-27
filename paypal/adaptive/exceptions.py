@@ -18,3 +18,5 @@ class InvalidBasket(Exception):
     """
 
 
+class PayPalFailedValidationException(Exception):
+    pass

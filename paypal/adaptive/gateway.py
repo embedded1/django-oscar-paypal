@@ -110,7 +110,7 @@ def set_payment_option(basket, pay_key, receiver_email, shipping_address=None):
 
 
 def pay(receivers, currency, return_url, cancel_url,
-        action=CREATE, sender_email=None, tracking_id=None,
+        action=PAY, sender_email=None, tracking_id=None,
         fees_payer='EACHRECEIVER', memo=None, ipn_url=None):
     """
     Submit a 'Pay' transaction to PayPal
@@ -170,7 +170,7 @@ def execute_payment(pay_key):
     return _request(Execute_Payment, params)
 
 
-def get_verified_status(first_name, last_name, email):
+def get_account_info(first_name, last_name, email):
     """
     Fetch payer status and personal details
     """
@@ -182,8 +182,12 @@ def get_verified_status(first_name, last_name, email):
     ]
 
     txn = _request(Get_Verified_Status, params, api=Adaptive_Accounts)
-    return txn.value("accountStatus")
-
+    return (
+        txn.value("accountStatus"),
+        txn.value("userInfo.emailAddress"),
+        txn.value("userInfo.name.firstName"),
+        txn.value("userInfo.name.lastName")
+    )
 
 
 def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=None):
