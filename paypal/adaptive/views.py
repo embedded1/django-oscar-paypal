@@ -121,18 +121,21 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         Partner's share is calculated as follows:
         1 - Payment for the shipping is made through partner's account so we need to pay him back
+            (based on settings attribute)
         2 - % of total revenue
-        3 - Total revenue = order total - shipping cost - insurance cost
+        3 - Total revenue = order total - shipping cost (without revenue) - insurance cost + revenue
         """
         selected_method = self.get_selected_shipping_method(basket)
         if selected_method is None:
             logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
 
         shipping_charge = selected_method.ship_charge_excl_revenue
-        insurance_charge = selected_method.ins_charge_excl_revenue
+        insurance_charge = selected_method.ins_charge_incl_revenue
         easypost_charge = D('0.05')
         total_revenue = basket.total_incl_tax - shipping_charge - insurance_charge - easypost_charge
-        partner_share = (total_revenue * D(settings.LOGISTIC_PARTNER_REVENUE)) + shipping_charge
+        partner_share = total_revenue * D(settings.LOGISTIC_PARTNER_REVENUE)
+        if settings.SHIPPING_PAYED_BY_LOGISTIC_PARTNER:
+            partner_share += shipping_charge
         return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
 
     def store_partner_share(self, share):
@@ -393,12 +396,12 @@ class SuccessResponseView(PaymentDetailsView):
         pass
 
     def get_context_data(self, **kwargs):
+        #We must provide order and frozen basket id to render the thank you template
+        kwargs['basket'] = self.load_frozen_basket(self.kwargs['basket_id'])
+        kwargs['order'] = self.get_order()
         ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
         if 'error' in ctx:
             messages.error(self.request, ctx['error'])
-        #We must provide order and frozen basket id to render the thank you template
-        ctx['order'] = self.get_order()
-        ctx['basket_id'] = self.kwargs['basket_id']
         return ctx
 
     def get_partner_share(self):
