@@ -130,11 +130,14 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
 
         shipping_charge = selected_method.ship_charge_excl_revenue
-        insurance_charge = selected_method.ins_charge_incl_revenue
+        shipping_revenue = selected_method.shipping_revenue
+        insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
         easypost_charge = D('0.05')
-        total_revenue = basket.total_incl_tax - shipping_charge - insurance_charge - easypost_charge
-        partner_share = total_revenue * D(settings.LOGISTIC_PARTNER_REVENUE)
-        if settings.SHIPPING_PAYED_BY_LOGISTIC_PARTNER:
+        services_revenue = basket.total_incl_tax - shipping_charge - \
+                           insurance_charge_incl_revenue - easypost_charge
+        partner_share = (shipping_revenue * settings.LOGISTIC_PARTNER_SHIPPING_MARGIN) +\
+                        (services_revenue * settings.LOGISTIC_PARTNER_SERVICES_MARGIN)
+        if settings.SHIPPING_WAS_PAYED_BY_LOGISTIC_PARTNER:
             partner_share += shipping_charge
         return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
 
@@ -330,7 +333,7 @@ class SuccessResponseView(PaymentDetailsView):
     template_name = template_name_preview
     preview = True
     err_msg = _("A problem occurred communicating with PayPal "
-        "- please try again later")
+                "- please try again later")
 
     def get_pay_key(self):
         self.pay_key = self.checkout_session.get_pay_key()
@@ -396,7 +399,8 @@ class SuccessResponseView(PaymentDetailsView):
         pass
 
     def get_context_data(self, **kwargs):
-        #We must provide order and frozen basket id to render the thank you template
+        #At this stage basket has ben frozen, we need to load it and to provide
+        #the new order that was created to show its details on the thank-you page
         kwargs['basket'] = self.load_frozen_basket(self.kwargs['basket_id'])
         kwargs['order'] = self.get_order()
         ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
