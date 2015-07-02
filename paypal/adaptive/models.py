@@ -25,6 +25,14 @@ class AdaptiveTransaction(base.ResponseModel):
     pay_key = models.CharField(max_length=64, null=True, blank=True,
                                db_index=True)
 
+    #We keep the payment status as we use delayed payments we need to know
+    #what transactions have been completed and what transactions we need to finish
+    #the secondary receiver payment
+    CREATED, COMPLETED, INCOMPLETE, ERROR, REVERSALERROR = 'CREATED', 'COMPLETED', 'INCOMPLETE',\
+                                                           'ERROR', 'REVERSALERROR'
+    payment_exec_status = models.CharField(max_length=32, null=True, blank=True,
+                                           db_index=True)
+
     error_code = models.CharField(max_length=32, null=True, blank=True)
     error_message = models.CharField(max_length=256, null=True, blank=True)
 
@@ -38,6 +46,10 @@ class AdaptiveTransaction(base.ResponseModel):
     @property
     def is_successful(self):
         return self.ack in (self.SUCCESS, self.SUCCESS_WITH_WARNING)
+
+    @property
+    def is_payment_successful(self):
+        return self.payment_exec_status in (self.CREATED, self.COMPLETED)
 
     @property
     def redirect_url(self):

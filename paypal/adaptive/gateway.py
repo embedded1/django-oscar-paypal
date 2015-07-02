@@ -110,7 +110,7 @@ def set_payment_option(basket, pay_key, receiver_email, shipping_address=None):
 
 
 def pay(receivers, currency, return_url, cancel_url,
-        action=PAY, sender_email=None, tracking_id=None,
+        action=PAY_PRIMARY, sender_email=None, tracking_id=None,
         fees_payer='EACHRECEIVER', memo=None, ipn_url=None):
     """
     Submit a 'Pay' transaction to PayPal
@@ -241,13 +241,14 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
         ack=pairs.get('responseEnvelope.ack', None),
         pay_key=pairs.get('payKey', None),
         correlation_id=pairs.get('responseEnvelope.correlationId', None),
+        payment_exec_status=pairs.get('paymentExecStatus', None),
         error_code=pairs.get('error(0).errorId', None),
         error_message=pairs.get('error(0).message', None),
         **txn_fields)
 
     txn.save()
 
-    if not txn.is_successful:
+    if not txn.is_successful or not txn.is_payment_successful:
         msg = "Error %s - %s" % (txn.error_code, txn.error_message)
         logger.error(msg)
         raise exceptions.PayPalError(msg)

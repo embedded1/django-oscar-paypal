@@ -7,7 +7,7 @@ from paypal.adaptive.gateway import (
 )
 
 
-def get_paypal_url_and_pay_key(receivers, basket, user, host=None, scheme=None, paypal_params=None):
+def get_pay_request_attrs(receivers, basket, user, host=None, scheme=None, paypal_params=None):
     """
     Return the URL for a PayPal Adaptive Payment transaction.
 
@@ -36,9 +36,11 @@ def get_paypal_url_and_pay_key(receivers, basket, user, host=None, scheme=None, 
               cancel_url=cancel_url,
               sender_email=user.email)
 
-
-    #now redirect the customer to PayPal to complete the payment
-    return txn.redirect_url, txn.pay_key
+    #Return some Pay request important attributes
+    return (
+        txn.redirect_url,
+        txn.correlation_id
+    )
 
 
 def fetch_transaction_details(pay_key):

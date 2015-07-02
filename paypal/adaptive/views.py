@@ -10,14 +10,12 @@ from paypal.adaptive.exceptions import (
     EmptyBasketException, MissingShippingAddressException,
     MissingShippingMethodException, InvalidBasket, PayPalFailedValidationException)
 from paypal.adaptive.facade import (
-    get_paypal_url_and_pay_key, fetch_transaction_details,
-    fetch_account_info, confirm_transaction)
+    get_pay_request_attrs, fetch_account_info )
 from paypal.express.facade import fetch_address_details
 from django.contrib import messages
 from django.utils import six
 from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext_lazy as _
-from oscar.apps.payment.exceptions import UnableToTakePayment
 import logging
 import copy
 
@@ -86,13 +84,11 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
             return url
 
-    def store_pay_key_in_session(self, pay_key):
+    def store_pay_transaction_id(self, transaction_id):
         """
-        The redirect url we pass to PayPal contains the pay key of this transaction
-        We need to store that key in session for the ExecutePayment command
-        Unfortunately, PayPal doesn't send this key back on the return url
+        We save Pay request correlation id to identify the Pay transaction
         """
-        self.checkout_session.store_pay_key(pay_key)
+        self.checkout_session.store_pay_transaction_id(transaction_id)
 
     def get_selected_shipping_method(self, basket):
         package = basket.get_package()
@@ -135,8 +131,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         easypost_charge = D('0.05')
         services_revenue = basket.total_incl_tax - shipping_charge - \
                            insurance_charge_incl_revenue - easypost_charge
-        partner_share = (shipping_revenue * settings.LOGISTIC_PARTNER_SHIPPING_MARGIN) +\
-                        (services_revenue * settings.LOGISTIC_PARTNER_SERVICES_MARGIN)
+        partner_share = (shipping_revenue * D(settings.LOGISTIC_PARTNER_SHIPPING_MARGIN)) +\
+                        (services_revenue * D(settings.LOGISTIC_PARTNER_SERVICES_MARGIN))
         if settings.SHIPPING_WAS_PAYED_BY_LOGISTIC_PARTNER:
             partner_share += shipping_charge
         return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
@@ -202,8 +198,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         params['receivers'] = self.get_receivers(basket)
 
-        redirect_url, pay_key = get_paypal_url_and_pay_key(**params)
-        self.store_pay_key_in_session(pay_key)
+        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
+        self.store_pay_transaction_id(pay_correlation_id)
         return redirect_url
 
 
@@ -335,14 +331,14 @@ class SuccessResponseView(PaymentDetailsView):
     err_msg = _("A problem occurred communicating with PayPal "
                 "- please try again later")
 
-    def get_pay_key(self):
-        self.pay_key = self.checkout_session.get_pay_key()
-        if self.pay_key is None:
+    def get_pay_transaction_id(self):
+        self.pay_transaction_id = self.checkout_session.get_pay_transaction_id()
+        if self.pay_transaction_id is None:
             # Manipulation - redirect to basket page with warning message
-            logger.warning("Missing pay key in session")
+            logger.warning("Missing pay transaction id in session")
             messages.error(
                 self.request,
-                _("Unable to determine PayPal transaction details"))
+                _("Unable to determine PayPal transaction details."))
 
     def load_frozen_basket(self, basket_id):
         # Lookup the frozen basket that this txn corresponds to
@@ -368,19 +364,13 @@ class SuccessResponseView(PaymentDetailsView):
         We fetch the txn details again and then proceed with oscar's standard
         payment details view for placing the order.
         """
-        self.get_pay_key()
-        if self.pay_key is None:
+        self.get_pay_transaction_id()
+        if self.pay_transaction_id is None:
             return HttpResponseRedirect(reverse('customer:pending-packages'))
         error_msg = _(
             "A problem occurred communicating with PayPal "
             "- please try again later"
         )
-        #try:
-            #self.txn = fetch_transaction_details(self.pay_key)
-        #except PayPalError:
-        #    # Unable to fetch txn details from PayPal - we have to bail out
-        #    messages.error(self.request, error_msg)
-        #    return HttpResponseRedirect(reverse('customer:pending-packages'))
 
         # Reload frozen basket which is specified in the URL
         basket = self.load_frozen_basket(kwargs['basket_id'])
@@ -437,19 +427,11 @@ class SuccessResponseView(PaymentDetailsView):
 
     def handle_payment(self, order_number, total, **kwargs):
         """
-        Complete payment with PayPal - this calls the 'ExecutePayment'
-        method to capture the money from the initial transaction.
+        Save order related data into DB
+        We keep the pay key in the payment source reference attribute so we
+        could finish the payment for the secondary receiver.
+        Payment event contains the Pay request transaction id for audit
         """
-        try:
-            details_txn = fetch_transaction_details(self.pay_key)
-        except PayPalError:
-            raise UnableToTakePayment(self.err_msg)
-
-        #make sure paymentExecuteStatus is not ERROR
-        #if confirm_txn.value('paymentExecStatus') == 'ERROR':
-        #    raise UnableToTakePayment(self.err_msg)
-
-        #payment_details_txn = self.txn
         # Record payment source and event
         partner_share = self.get_partner_share()
         source_type, is_created = SourceType.objects.get_or_create(
@@ -457,14 +439,14 @@ class SuccessResponseView(PaymentDetailsView):
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
-                        amount_debited=partner_share)
+                        amount_debited=partner_share,
+                        reference=self.pay_transaction_id)
         self.add_payment_source(source)
-        self.add_payment_event('Settled', total.incl_tax,
-                               reference=details_txn.correlation_id)
+        self.add_payment_event('Settled', total.incl_tax)
         #delete partner's share from session
         self.checkout_session.delete_partner_share()
-        #delete the pay_key from session
-        self.checkout_session.delete_pay_key()
+        #delete the paypal_ap attributes from session
+        self.checkout_session.delete_pay_transaction_id()
 
 
     def unfreeze_basket(self, basket_id):
