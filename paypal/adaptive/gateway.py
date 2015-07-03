@@ -248,7 +248,8 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
 
     txn.save()
 
-    if not txn.is_successful or not txn.is_payment_successful:
+    if not txn.is_successful or\
+       action == Pay and not txn.is_payment_successful:
         msg = "Error %s - %s" % (txn.error_code, txn.error_message)
         logger.error(msg)
         raise exceptions.PayPalError(msg)

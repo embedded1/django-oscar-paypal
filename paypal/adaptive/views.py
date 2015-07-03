@@ -121,14 +121,20 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         2 - % of total revenue
         3 - Total revenue = order total - shipping cost (without revenue) - insurance cost + revenue
         """
-        selected_method = self.get_selected_shipping_method(basket)
-        if selected_method is None:
-            logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
+        easypost_charge = shipping_charge = shipping_revenue = \
+        insurance_charge_incl_revenue = D('0.0')
 
-        shipping_charge = selected_method.ship_charge_excl_revenue
-        shipping_revenue = selected_method.shipping_revenue
-        insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
-        easypost_charge = D('0.05')
+        #selected shipping method is not available for prepaid return labels
+        if not self.checkout_session.is_return_to_store_prepaid_enabled():
+            selected_method = self.get_selected_shipping_method(basket)
+            if selected_method is None:
+                logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
+
+            shipping_charge = selected_method.ship_charge_excl_revenue
+            shipping_revenue = selected_method.shipping_revenue
+            insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
+            easypost_charge = D('0.05')
+
         services_revenue = basket.total_incl_tax - shipping_charge - \
                            insurance_charge_incl_revenue - easypost_charge
         partner_share = (shipping_revenue * D(settings.LOGISTIC_PARTNER_SHIPPING_MARGIN)) +\

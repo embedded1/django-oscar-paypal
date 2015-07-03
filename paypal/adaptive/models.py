@@ -49,6 +49,12 @@ class AdaptiveTransaction(base.ResponseModel):
 
     @property
     def is_payment_successful(self):
+        """
+        For Pay transactions we must make sure the transaction has finished
+        successfully, checking the ack attribute is not enough
+        """
+        if not self.action == 'Pay':
+            return True
         return self.payment_exec_status in (self.CREATED, self.COMPLETED)
 
     @property
