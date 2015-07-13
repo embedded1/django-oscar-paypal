@@ -127,8 +127,11 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         #selected shipping method is not available for prepaid return labels
         if not self.checkout_session.is_return_to_store_prepaid_enabled():
             selected_method = self.get_selected_shipping_method(basket)
+            #we couldn't find selected shipping method in cache, need to cancel
+            #the transaction and show error message
             if selected_method is None:
                 logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
+                raise PayPalError()
 
             shipping_charge = selected_method.ship_charge_excl_revenue
             shipping_revenue = selected_method.shipping_revenue
