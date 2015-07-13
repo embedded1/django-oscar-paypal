@@ -388,6 +388,8 @@ class SuccessResponseView(PaymentDetailsView):
             return HttpResponseRedirect(reverse('customer:pending-packages'))
 
         submission = self.build_submission(basket=basket)
+        #add shipping method to payment_kwargs so we could audit our revenue of this order
+        submission['payment_kwargs'].update({'shipping_method': submission['shipping_method']})
         self.submit(**submission)
         return HttpResponse(status=204)
 
@@ -434,12 +436,22 @@ class SuccessResponseView(PaymentDetailsView):
 
         return order
 
+    def get_usendhome_share(self, total, partner_share, shipping_method):
+        easypost_charge = D('0.05')
+        return total.incl_tax - partner_share - easypost_charge - \
+               shipping_method.ship_charge_excl_revenue - shipping_method.ins_charge_excl_revenue
+
+
     def handle_payment(self, order_number, total, **kwargs):
         """
         Save order related data into DB
         We keep the pay key in the payment source reference attribute so we
         could finish the payment for the secondary receiver.
         Payment event contains the Pay request transaction id for audit
+        The payment source stores the following:
+        1 - amount_allocated = Order total value
+        2 - amount_debited = Partner's share
+        3 - amount_refunded = USendHome's share
         """
         # Record payment source and event
         partner_share = self.get_partner_share()
@@ -449,6 +461,8 @@ class SuccessResponseView(PaymentDetailsView):
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
                         amount_debited=partner_share,
+                        amount_refunded=self.get_usendhome_share(total, partner_share,
+                                                                 kwargs['shipping_method']),
                         reference=self.pay_transaction_id)
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
