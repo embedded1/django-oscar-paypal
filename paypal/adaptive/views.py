@@ -1,6 +1,6 @@
 from oscar.core.loading import get_class
 from decimal import ROUND_FLOOR, Decimal as D
-from django.http import Http404, HttpResponseRedirect, HttpResponse
+from django.http import HttpResponseRedirect, HttpResponseNotAllowed
 from django.db.models import get_model
 from django.views import generic
 from django.shortcuts import get_object_or_404
@@ -15,7 +15,7 @@ from paypal.express.facade import fetch_address_details
 from django.contrib import messages
 from django.utils import six
 from django.core.urlresolvers import reverse
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import ugettext as _
 import logging
 import copy
 
@@ -119,11 +119,12 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         1 - Payment for the shipping is made through partner's account so we need to pay him back
             (based on settings attribute)
         2 - % of total revenue
-        3 - Total revenue = order total - shipping cost (without revenue) - insurance cost + revenue
-        We take the insurance revenue for us only
+        3 - We refer to shipping discounts as vouchers and to services discounts as offers
         """
-        easypost_charge = shipping_charge = shipping_revenue = \
-        insurance_charge_incl_revenue = partner_share = D('0.0')
+        easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
+        partner_share = shipping_discounts = shipping_charge_incl_revenue = D('0.0')
+        order_total_no_discounts =  basket.total_excl_tax_excl_discounts
+        services_discounts = sum(offer['discount'] for offer in basket.offer_discounts) or D('0.0')
 
         #selected shipping method is not available for prepaid return labels
         if not self.checkout_session.is_return_to_store_prepaid_enabled():
@@ -134,24 +135,35 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
                 raise PayPalError()
 
-            shipping_charge = selected_method.ship_charge_excl_revenue
-            shipping_revenue = selected_method.shipping_revenue
-            insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
-            carrier = selected_method.carrier.upper()
             easypost_charge = D('0.05')
+            shipping_discounts = sum(voucher['discount'] for voucher in basket.voucher_discounts) or D('0.0')
+            shipping_margin = selected_method.shipping_revenue
+            #check if shipping insurance is needed
+            if basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
+                insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
+            shipping_charge_incl_revenue = selected_method.ship_charge_incl_revenue
+            carrier = selected_method.carrier.upper()
 
             try:
                 if settings.SHIPPING_WAS_PAYED_BY_LOGISTIC_PARTNER[carrier]:
-                    partner_share += shipping_charge
+                    partner_share += selected_method.ship_charge_excl_revenue
             except KeyError:
                 logger.critical("carrier %s was not found in "
                                 "settings.SHIPPING_WAS_PAYED_BY_LOGISTIC_PARTNER" % carrier)
 
-        services_revenue = basket.total_incl_tax - shipping_charge - \
-                           insurance_charge_incl_revenue - easypost_charge
-        partner_share += (shipping_revenue * D(settings.LOGISTIC_PARTNER_SHIPPING_MARGIN)) +\
-                        (services_revenue * D(settings.LOGISTIC_PARTNER_SERVICES_MARGIN))
-
+        #Calculate shipping margin, we decrease easypost charge and any shipping discounts
+        shipping_revenue = shipping_margin - easypost_charge - shipping_discounts
+        shipping_revenue = D('0.0') if shipping_revenue < D('0.0') else shipping_revenue
+        #Partner doesn't get any revenue from shipping insurance
+        no_revenues = insurance_charge_incl_revenue
+        #Services revenue is what if left in basket after we decrease the shipping part,
+        #the lines that the partner doesn't get any revenue from and finally the services discounts
+        services_revenue = order_total_no_discounts - shipping_charge_incl_revenue - \
+                           no_revenues - services_discounts
+        services_revenue = D('0.0') if services_revenue < D('0.0') else services_revenue
+        #Calculate partner's share that consists of 2 parts: shipping revenue and services revenue
+        partner_share += (shipping_revenue * D(settings.LOGISTIC_PARTNER_SHIPPING_MARGIN)) + \
+                         (services_revenue * D(settings.LOGISTIC_PARTNER_SERVICES_MARGIN))
         return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
 
     def store_partner_share(self, share):
@@ -342,8 +354,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
 
 class SuccessResponseView(PaymentDetailsView):
-    template_name_preview = 'paypal/adaptive/thank_you.html'
-    template_name = template_name_preview
+    has_error = False
     preview = True
     err_msg = _("A problem occurred communicating with PayPal "
                 "- please try again later")
@@ -373,8 +384,13 @@ class SuccessResponseView(PaymentDetailsView):
 
         return basket
 
-
     def post(self, request, *args, **kwargs):
+        """
+        We only support GET request
+        """
+        return HttpResponseNotAllowed(permitted_methods='GET')
+
+    def get(self, request, *args, **kwargs):
         """
         Place an order.
 
@@ -396,10 +412,14 @@ class SuccessResponseView(PaymentDetailsView):
             return HttpResponseRedirect(reverse('customer:pending-packages'))
 
         submission = self.build_submission(basket=basket)
-        #add shipping method to payment_kwargs so we could audit our revenue of this order
-        submission['payment_kwargs'].update({'shipping_method': submission['shipping_method']})
         self.submit(**submission)
-        return HttpResponse(status=204)
+        #we don't display the error message here but we redirect to
+        #pending packages page
+        if self.has_error:
+            return HttpResponseRedirect(reverse('customer:pending-packages'))
+        #Order placement process has successfully finished,
+        #redirect to thank you page
+        return HttpResponseRedirect(reverse('checkout:thank-you'))
 
     # Warning: This method can be removed when we drop support for Oscar 0.6
     def get_error_response(self):
@@ -408,13 +428,12 @@ class SuccessResponseView(PaymentDetailsView):
         pass
 
     def get_context_data(self, **kwargs):
-        #At this stage basket has ben frozen, we need to load it and to provide
-        #the new order that was created to show its details on the thank-you page
-        kwargs['basket'] = self.load_frozen_basket(self.kwargs['basket_id'])
-        kwargs['order'] = self.get_order()
         ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
         if 'error' in ctx:
             messages.error(self.request, ctx['error'])
+            #Mark that order placement process has encountered an error
+            #need to redirect to pending packages page with the error
+            self.has_error = True
         return ctx
 
     def get_partner_share(self):
@@ -423,31 +442,6 @@ class SuccessResponseView(PaymentDetailsView):
         we keep that saved under the 'amount_debited' attribute
         """
         return self.checkout_session.get_partner_share()
-
-    def get_order(self):
-        # We allow superusers to force an order thankyou page for testing
-        order = None
-        if self.request.user.is_superuser:
-            if 'order_number' in self.request.GET:
-                order = Order._default_manager.get(
-                    number=self.request.GET['order_number'])
-            elif 'order_id' in self.request.GET:
-                order = Order._default_manager.get(
-                    id=self.request.GET['order_id'])
-
-        if not order:
-            if 'checkout_order_id' in self.request.session:
-                order = Order._default_manager.get(
-                    pk=self.request.session['checkout_order_id'])
-            else:
-                raise Http404(_("No order found"))
-
-        return order
-
-    def get_usendhome_share(self, total, partner_share, shipping_method):
-        easypost_charge = D('0.05')
-        return total.incl_tax - partner_share - easypost_charge - \
-               shipping_method.ship_charge_excl_revenue - shipping_method.ins_charge_excl_revenue
 
 
     def handle_payment(self, order_number, total, **kwargs):
@@ -469,8 +463,7 @@ class SuccessResponseView(PaymentDetailsView):
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
                         amount_debited=partner_share,
-                        amount_refunded=self.get_usendhome_share(total, partner_share,
-                                                                 kwargs['shipping_method']),
+                        amount_refunded=total.incl_tax - partner_share,
                         reference=self.pay_transaction_id)
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
