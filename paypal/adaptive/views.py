@@ -293,13 +293,13 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             return False
 
         #check that the paypal account name is same as the one on site
-        if pp_account_first_name != sender_first_name or \
-           pp_account_last_name != sender_last_name:
-            logger.error("PayPal account name does not match USendHome account name: %s %s, paypal name: %s %s"
-                         % (sender_first_name, sender_last_name, pp_account_first_name, pp_account_last_name))
-            messages.error(self.request, _("PayPal account name doesn't match the account name at USendHome.com<br/>"
-                                           "Please edit your settings and try again."), extra_tags='safe block')
-            return False
+        #if pp_account_first_name != sender_first_name or \
+        #   pp_account_last_name != sender_last_name:
+        #    logger.error("PayPal account name does not match USendHome account name: %s %s, paypal name: %s %s"
+        #                 % (sender_first_name, sender_last_name, pp_account_first_name, pp_account_last_name))
+        #    messages.error(self.request, _("PayPal account name doesn't match the account name at USendHome.com<br/>"
+        #                                   "Please edit your settings and try again."), extra_tags='safe block')
+        #    return False
 
         return True
 
