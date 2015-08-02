@@ -46,10 +46,18 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     # basket page but True when redirecting from checkout.
     as_payment_method = False
 
+    def dispatch(self, request, *args, **kwargs):
+        self.basket = request.basket
+        self.package = request.basket.get_package()
+        if self.package is None:
+            logger.error("Paypal Adaptive Payments: couldn't get package"
+                         " from basket for partner share calculations")
+            raise PayPalError()
+        return super(RedirectView, self).dispatch(request, *args, **kwargs)
+
     def get_redirect_url(self, **kwargs):
         try:
-            basket = self.request.basket
-            url = self._get_redirect_url(basket, **kwargs)
+            url = self._get_redirect_url(**kwargs)
         except PayPalError:
             messages.error(
                 self.request, _("An error occurred communicating with PayPal"))
@@ -78,9 +86,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             # Transaction successfully registered with PayPal.  Now freeze the
             # basket so it can't be edited while the customer is on the PayPal
             # site.
-            basket.freeze()
+            self.basket.freeze()
 
-            logger.info("Basket #%s - redirecting to %s", basket.id, url)
+            logger.info("Basket #%s - redirecting to %s", self.basket.id, url)
 
             return url
 
@@ -90,13 +98,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         self.checkout_session.store_pay_transaction_id(transaction_id)
 
-    def get_selected_shipping_method(self, basket):
-        package = basket.get_package()
-        if package is None:
-            logger.error("Paypal Adaptive Payments: couldn't get package"
-                            " from basket for partner share calculations")
-            raise PayPalError()
-        key = package.upc
+    def get_selected_shipping_method(self):
+        key = self.package.upc
         #make special key for return to store checkout where we need to
         #show only domestic methods
         if self.checkout_session.is_return_to_store_enabled():
@@ -110,10 +113,10 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             raise PayPalError()
 
         #return the selected shipping method
-        code = self.checkout_session.shipping_method_code(basket)
+        code = self.checkout_session.shipping_method_code(self.basket)
         return repo.get_shipping_method_by_code(code)
 
-    def calc_partner_share(self, basket):
+    def calc_partner_share(self, partner_order_payment_settings):
         """
         Partner's share is calculated as follows:
         1 - Payment for the shipping is made through partner's account so we need to pay him back
@@ -123,12 +126,12 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
         partner_share = shipping_discounts = shipping_charge_incl_revenue = D('0.0')
-        order_total_no_discounts =  basket.total_excl_tax_excl_discounts
-        services_discounts = sum(offer['discount'] for offer in basket.offer_discounts) or D('0.0')
+        order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
+        services_discounts = sum(offer['discount'] for offer in self.basket.offer_discounts) or D('0.0')
 
         #selected shipping method is not available for prepaid return labels
         if not self.checkout_session.is_return_to_store_prepaid_enabled():
-            selected_method = self.get_selected_shipping_method(basket)
+            selected_method = self.get_selected_shipping_method()
             #we couldn't find selected shipping method in cache, need to cancel
             #the transaction and show error message
             if selected_method is None:
@@ -136,20 +139,17 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 raise PayPalError()
 
             easypost_charge = D('0.05')
-            shipping_discounts = sum(voucher['discount'] for voucher in basket.voucher_discounts) or D('0.0')
+            shipping_discounts = sum(voucher['discount'] for voucher in self.basket.voucher_discounts) or D('0.0')
             shipping_margin = selected_method.shipping_revenue
             #check if shipping insurance is needed
-            if basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
+            if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
                 insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
             shipping_charge_incl_revenue = selected_method.ship_charge_incl_revenue
             carrier = selected_method.carrier.upper()
+            #check if partner pays for postage
+            if partner_order_payment_settings.postage_paid_by_partner(carrier):
+                partner_share += selected_method.ship_charge_excl_revenue
 
-            try:
-                if settings.SHIPPING_WAS_PAYED_BY_LOGISTIC_PARTNER[carrier]:
-                    partner_share += selected_method.ship_charge_excl_revenue
-            except KeyError:
-                logger.critical("carrier %s was not found in "
-                                "settings.SHIPPING_WAS_PAYED_BY_LOGISTIC_PARTNER" % carrier)
 
         #Calculate shipping margin, we decrease easypost charge and any shipping discounts
         shipping_revenue = shipping_margin - easypost_charge - shipping_discounts
@@ -162,8 +162,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                            no_revenues - services_discounts
         services_revenue = D('0.0') if services_revenue < D('0.0') else services_revenue
         #Calculate partner's share that consists of 2 parts: shipping revenue and services revenue
-        partner_share += (shipping_revenue * D(settings.LOGISTIC_PARTNER_SHIPPING_MARGIN)) + \
-                         (services_revenue * D(settings.LOGISTIC_PARTNER_SERVICES_MARGIN))
+        partner_share += ( (shipping_revenue * partner_order_payment_settings.shipping_margin) +
+                           (services_revenue * partner_order_payment_settings.services_margin) ) / D('100.0')
         return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
 
     def store_partner_share(self, share):
@@ -173,29 +173,48 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         self.checkout_session.store_partner_share(share)
 
-    def get_receivers(self, basket):
+    def get_receivers(self):
         """
-        For each payment we need to calculate partner's share
-        Primary receiver amount is equal to basket total
-        Partner share amount is: shipping costs + profit percentage
+        This function returns the payment receivers, we support 2 options:
+        1 - Order payment is split between USendHome and the partner, in that case
+            we calculate partner's share
+        2 - Order payment isn't split and transferred as a whole to USendHome
+        To determine in what option are we, we check if PartnerOrderPaymentSettings object
+        is available for package's partner, if it exists, we follow it and divide the payment
+        between UsendHome and the partner, otherwise, we take it all.
         """
-        receivers = copy.deepcopy(settings.PAYPAL_ADAPTIVE_PAYMENTS_RECEIVERS_TEMPLATE)
-        for r in receivers:
-            if r['is_primary']:
-                r['amount'] = basket.total_incl_tax
-            else:
-                partner_share = self.calc_partner_share(basket)
-                r['amount'] = partner_share
-                self.store_partner_share(partner_share)
+        receivers = [
+            {
+                'email': settings.PAYPAL_PRIMARY_RECEIVER_EMAIL,
+                'is_primary': True,
+                'amount': self.basket.total_incl_tax
+            }
+        ]
+
+        #Find out if we need to transfer funds to partner
+        partner = self.package.stockrecords.all().prefetch_related(
+            'partner', 'partner__payments_settings')[0].partner
+        partner_order_payment_settings = partner.active_payment_settings
+
+        if partner_order_payment_settings:
+            partner_share = self.calc_partner_share(partner_order_payment_settings)
+            #store partner's share in sessions as we
+            #would like to store it in DB for audit
+            self.store_partner_share(partner_share)
+            receivers.append({
+                'email': partner_order_payment_settings.billing_email,
+                'is_primary': False,
+                'amount': partner_share
+            })
+
         return receivers
 
 
-    def _get_redirect_url(self, basket, **kwargs):
-        if basket.is_empty:
+    def _get_redirect_url(self, **kwargs):
+        if self.basket.is_empty:
             raise EmptyBasketException()
-
         user = self.request.user
-        customer_shipping_address = self.get_shipping_address(basket)
+        customer_shipping_address = self.get_shipping_address(self.basket)
         is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
 
         #check that shipping address exists
@@ -214,7 +233,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             raise PayPalFailedValidationException()
 
         params = {
-            'basket': basket,
+            'basket': self.basket,
             'user': self.request.user
         }
 
@@ -225,7 +244,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         params['paypal_params'] = self._get_paypal_params()
 
-        params['receivers'] = self.get_receivers(basket)
+        params['receivers'] = self.get_receivers()
 
         redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
@@ -457,8 +476,7 @@ class SuccessResponseView(PaymentDetailsView):
         """
         # Record payment source and event
         partner_share = self.get_partner_share()
-        source_type, is_created = SourceType.objects.get_or_create(
-            name='PayPal')
+        source_type, is_created = SourceType.objects.get_or_create(name='PayPal')
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
