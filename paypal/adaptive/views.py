@@ -246,6 +246,15 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         params['receivers'] = self.get_receivers()
 
+        #The default Pay actionType is PAY_PRIMARY for chained payments
+        #we need to set it to Pay in case no secondary receiver exists
+        if len(params['receivers']) == 1:
+            params['action'] = 'PAY'
+            #Only 1 receiver, need to change is_primary to False
+            params['receivers'][0]['is_primary'] = False
+        else:
+            params['action'] = 'PAY_PRIMARY'
+
         redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
         return redirect_url
