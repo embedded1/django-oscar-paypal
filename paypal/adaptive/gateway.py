@@ -178,7 +178,7 @@ def get_account_info(first_name, last_name, email):
         ("emailAddress", email),
         ("firstName", first_name),
         ("lastName", last_name),
-        ("matchCriteria", "NONE")
+        ("matchCriteria", "NAME")
     ]
 
     txn = _request(Get_Verified_Status, params, api=Adaptive_Accounts)
