@@ -17,7 +17,6 @@ from django.utils import six
 from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext as _
 import logging
-import copy
 
 TWO_PLACES = D('0.01')
 
@@ -52,7 +51,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         if self.package is None:
             logger.error("Paypal Adaptive Payments: couldn't get package"
                          " from basket for partner share calculations")
-            raise PayPalError()
+            messages.error(
+                request, _("An error occurred communicating with PayPal"))
+            return HttpResponseRedirect(reverse('customer:pending-packages'))
         return super(RedirectView, self).dispatch(request, *args, **kwargs)
 
     def get_redirect_url(self, **kwargs):
@@ -123,9 +124,11 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             (based on settings attribute)
         2 - % of total revenue
         3 - We refer to shipping discounts as vouchers and to services discounts as offers
+        4 - We pay $0.3 for partner in case he doesn't pay for the postage, otherwise we pay
+            him amount equals to bank_fee - 0.3
         """
         easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
-        partner_share = shipping_discounts = shipping_charge_incl_revenue = D('0.0')
+        partner_share = shipping_discounts = shipping_charge_incl_revenue = bank_fee = D('0.0')
         order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
         services_discounts = sum(offer['discount'] for offer in self.basket.offer_discounts) or D('0.0')
 
@@ -141,25 +144,39 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             easypost_charge = D('0.05')
             shipping_discounts = sum(voucher['discount'] for voucher in self.basket.voucher_discounts) or D('0.0')
             shipping_margin = selected_method.shipping_revenue
+
+            bank_fee_line = self.basket.get_item_at_position(settings.BANK_FEE_POSITION)
+            if bank_fee_line is None:
+                logger.error("Paypal adaptive payments: couldn't get back fee line from basket")
+                raise PayPalError()
+
+            bank_fee = bank_fee_line.price_incl_tax
+
             #check if shipping insurance is needed
             if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
                 insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
+
             shipping_charge_incl_revenue = selected_method.ship_charge_incl_revenue
             carrier = selected_method.carrier.upper()
-            #check if partner pays for postage
+            #if partner pays for postage we need to transfer him the postage costs
+            #and the bank fee we received for the postage, which is the bank_fee - 0.3
+            #otherwise, we only transfer him 0.3
             if partner_order_payment_settings.postage_paid_by_partner(carrier):
-                partner_share += selected_method.ship_charge_excl_revenue
-
+                partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
+                partner_share += selected_method.ship_charge_excl_revenue + partner_bank_fee
+            else:
+                partner_share += D('0.3')
 
         #Calculate shipping margin, we decrease easypost charge and any shipping discounts
         shipping_revenue = shipping_margin - easypost_charge - shipping_discounts
         shipping_revenue = D('0.0') if shipping_revenue < D('0.0') else shipping_revenue
         #Partner doesn't get any revenue from shipping insurance
         no_revenues = insurance_charge_incl_revenue
-        #Services revenue is what if left in basket after we decrease the shipping part,
-        #the lines that the partner doesn't get any revenue from and finally the services discounts
+        #Services revenue is what left in basket after we decrease the shipping part,
+        #the lines that the partner doesn't get any revenue from, the bank fee that we already
+        #calculated partner's share above and finally the services discounts
         services_revenue = order_total_no_discounts - shipping_charge_incl_revenue - \
-                           no_revenues - services_discounts
+                           no_revenues - services_discounts - bank_fee
         services_revenue = D('0.0') if services_revenue < D('0.0') else services_revenue
         #Calculate partner's share that consists of 2 parts: shipping revenue and services revenue
         partner_share += ( (shipping_revenue * partner_order_payment_settings.shipping_margin) +
@@ -391,7 +408,7 @@ class SuccessResponseView(PaymentDetailsView):
         self.pay_transaction_id = self.checkout_session.get_pay_transaction_id()
         if self.pay_transaction_id is None:
             # Manipulation - redirect to basket page with warning message
-            logger.warning("Missing pay transaction id in session")
+            logger.error("SuccessResponseView: Missing pay transaction id in session")
             messages.error(
                 self.request,
                 _("Unable to determine PayPal transaction details."))
@@ -436,6 +453,7 @@ class SuccessResponseView(PaymentDetailsView):
         # Reload frozen basket which is specified in the URL
         basket = self.load_frozen_basket(kwargs['basket_id'])
         if not basket:
+            logger.error("SuccessResponseView: no basket found")
             messages.error(self.request, error_msg)
             return HttpResponseRedirect(reverse('customer:pending-packages'))
 
@@ -444,6 +462,8 @@ class SuccessResponseView(PaymentDetailsView):
         #we don't display the error message here but we redirect to
         #pending packages page
         if self.has_error:
+            logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
+                            " has already benn carried")
             return HttpResponseRedirect(reverse('customer:pending-packages'))
         #Order placement process has successfully finished,
         #redirect to thank you page
@@ -538,7 +558,7 @@ class SuccessResponseView(PaymentDetailsView):
                                                       order_total, payment_kwargs, order_kwargs)
 
 
-class CancelResponseView(RedirectView):
+class CancelResponseView(generic.RedirectView):
     permanent = False
 
     def get(self, request, *args, **kwargs):
