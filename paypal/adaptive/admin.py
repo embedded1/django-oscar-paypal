@@ -3,8 +3,8 @@ from . import models
 
 
 class TxnAdmin(admin.ModelAdmin):
-    list_display = ['correlation_id', 'action', 'ack', 'pay_key', 'date_created']
-
+    list_display = ['correlation_id', 'action', 'ack', 'pay_key', 'payment_exec_status', 'date_created']
+    list_filter = ['payment_exec_status', 'action']
     readonly_fields = [
         'is_sandbox',
         'pay_key',
@@ -19,6 +19,7 @@ class TxnAdmin(admin.ModelAdmin):
         'raw_request',
         'raw_response',
         'response_time',
+        'payment_exec_status',
         'date_created',
     ]
 
