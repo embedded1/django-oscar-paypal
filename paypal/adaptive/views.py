@@ -257,7 +257,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                                  sender_last_name=user.last_name,
                                  sender_shipping_address=customer_shipping_address,
                                  return_to_merchant=is_return_to_merchant,
-                                 skip_account_status_test=user.get_profile().skip_pp_verified_account_test,):
+                                 skip_account_status_test=user.get_profile().skip_pp_verified_account_test):
             raise PayPalFailedValidationException()
 
         params = {
