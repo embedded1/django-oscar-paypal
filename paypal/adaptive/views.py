@@ -245,8 +245,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         if not self.validate_txn(sender_email=user.email,
                                  sender_first_name=user.first_name,
                                  sender_last_name=user.last_name,
-                                 is_return_to_merchant=is_return_to_merchant,
-                                 sender_shipping_address=customer_shipping_address):
+                                 sender_shipping_address=customer_shipping_address,
+                                 return_to_merchant=is_return_to_merchant,
+                                 skip_account_status_test=user.get_profile().skip_pp_verified_account_test,):
             raise PayPalFailedValidationException()
 
         params = {
@@ -283,16 +284,18 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         return {}
 
-    def validate_txn(self, sender_email, sender_first_name,
-                     sender_last_name, is_return_to_merchant, sender_shipping_address):
+    def validate_txn(self, sender_email, sender_first_name, sender_last_name, return_to_merchant,
+                     skip_account_status_test, sender_shipping_address):
 
         #make sure user has verified Paypal account and account data is valid
-        if not self.validate_account_status(sender_email, sender_first_name, sender_last_name):
+        if not self.validate_paypal_account(
+                sender_email, sender_first_name,
+                sender_last_name, skip_account_status_test):
             return False
 
         #check shipping address only for non merchant addresses
         #this check is not needed for US addresses where the package is returned to store
-        if not is_return_to_merchant:
+        if not return_to_merchant:
             if not self.validate_shipping_address(sender_email, sender_shipping_address):
                 return False
 
@@ -302,7 +305,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     def get_account_status(self, first_name, last_name, email):
         return fetch_account_info(first_name, last_name, email)
 
-    def validate_account_status(self, sender_email, sender_first_name, sender_last_name):
+    def validate_paypal_account(self, sender_email, sender_first_name,
+                                sender_last_name, skip_account_status_test):
         #Get account info from PP
         try:
             (pp_account_status,
@@ -320,12 +324,15 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                                            " match the ones on file at PayPal."))
             return False
 
-        if pp_account_status.lower() != 'verified':
-            logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
-            # unverified payer - redirect to pending packages page with error message
-            messages.error(self.request, _("Your PayPal account isn't verified, please verify your account before"
-                                           " proceeding to checkout."))
-            return False
+        #check payer status (In some countries it is hard to get PayPal account verified
+        #therefore we added an exception where we can skip this test for specific users)
+        if not skip_account_status_test:
+            if pp_account_status.lower() != 'verified':
+                logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
+                # unverified payer - redirect to pending packages page with error message
+                messages.error(self.request, _("Your PayPal account isn't verified, please verify your account before"
+                                               " proceeding to checkout."))
+                return False
 
 
         #make sure the paypal email address is identical to the email address the customer
