@@ -226,10 +226,20 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         return receivers
 
+    def align_receivers(self, params):
+        #The default Pay actionType is PAY_PRIMARY for chained payments
+        #we need to set it to Pay in case no secondary receiver exists
+        if len(params['receivers']) == 1:
+            params['action'] = 'PAY'
+            #Only 1 receiver, need to change is_primary to False
+            params['receivers'][0]['is_primary'] = False
+        else:
+            params['action'] = 'PAY_PRIMARY'
 
     def _get_redirect_url(self, **kwargs):
         if self.basket.is_empty:
             raise EmptyBasketException()
+
         user = self.request.user
         customer_shipping_address = self.get_shipping_address(self.basket)
         is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
@@ -252,7 +262,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         params = {
             'basket': self.basket,
-            'user': self.request.user
+            'sender_email': self.request.user.email
         }
 
         if settings.DEBUG:
@@ -263,15 +273,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         params['paypal_params'] = self._get_paypal_params()
 
         params['receivers'] = self.get_receivers()
-
-        #The default Pay actionType is PAY_PRIMARY for chained payments
-        #we need to set it to Pay in case no secondary receiver exists
-        if len(params['receivers']) == 1:
-            params['action'] = 'PAY'
-            #Only 1 receiver, need to change is_primary to False
-            params['receivers'][0]['is_primary'] = False
-        else:
-            params['action'] = 'PAY_PRIMARY'
+        self.align_receivers(params)
 
         redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
@@ -404,6 +406,44 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         return True
 
+class GuestRedirectView(RedirectView):
+    def _get_redirect_url(self, **kwargs):
+        """
+        Guest payment allows customer with no PayPal account to
+        transfer the payment using a credit card instead of using their
+        PayPal account balance. We don't run the standard PayPal validations
+        as there's no such account.
+        """
+        if self.basket.is_empty:
+            raise EmptyBasketException()
+
+        customer_shipping_address = self.get_shipping_address(self.basket)
+        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
+
+        #check that shipping address exists
+        if not customer_shipping_address and not is_return_to_merchant:
+            # we could not get shipping address - redirect to basket page with warning message
+            logger.warning("customer's shipping address not found while verifying PayPal account")
+            self.unfreeze_basket(kwargs['basket_id'])
+            raise MissingShippingMethodException()
+
+        params = {
+            'basket': self.basket
+        }
+
+        if settings.DEBUG:
+            # Determine the localserver's hostname to use when
+            # in testing mode
+            params['host'] = self.request.META['HTTP_HOST']
+
+        params['paypal_params'] = self._get_paypal_params()
+
+        params['receivers'] = self.get_receivers()
+        self.align_receivers(params)
+
+        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
+        self.store_pay_transaction_id(pay_correlation_id)
+        return redirect_url
 
 class SuccessResponseView(PaymentDetailsView):
     has_error = False
