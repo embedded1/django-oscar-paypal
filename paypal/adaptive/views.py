@@ -196,6 +196,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         self.checkout_session.store_partner_share(share)
 
+
     def get_receivers(self):
         """
         This function returns the payment receivers, we support 2 options:
@@ -281,9 +282,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id, payment_method = get_pay_request_attrs(**params)
+        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
-        self.store_pay_payment_method(payment_method)
+        self.store_pay_payment_method('PayPal Account')
         return redirect_url
 
 
@@ -448,9 +449,9 @@ class GuestRedirectView(RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id, payment_method = get_pay_request_attrs(**params)
+        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
-        self.store_pay_payment_method(payment_method)
+        self.store_pay_payment_method('Credit Card')
         return redirect_url
 
 class SuccessResponseView(PaymentDetailsView):

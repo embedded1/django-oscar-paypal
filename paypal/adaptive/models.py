@@ -32,7 +32,6 @@ class AdaptiveTransaction(base.ResponseModel):
                                                            'ERROR', 'REVERSALERROR'
     payment_exec_status = models.CharField(max_length=32, null=True, blank=True,
                                            db_index=True)
-    is_credit_card = models.BooleanField(default=False)
     error_code = models.CharField(max_length=32, null=True, blank=True)
     error_message = models.CharField(max_length=256, null=True, blank=True)
 
@@ -64,9 +63,3 @@ class AdaptiveTransaction(base.ResponseModel):
         else:
             url = 'https://www.paypal.com/cgi-bin/webscr?cmd=_ap-payment&paykey=%s'
         return url % self.pay_key
-
-    @property
-    def payment_method(self):
-        if self.is_credit_card:
-            return 'Credit Card'
-        return 'PayPal Account'

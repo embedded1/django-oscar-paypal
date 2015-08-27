@@ -222,8 +222,6 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
         url = 'https://svcs.paypal.com/%s/%s'
         is_sandbox = False
 
-    is_credit_card = True if 'senderEmail' not in params else False
-
     url = url % (api, action)
 
     # We use an OrderedDict as the key-value pairs have to be in the correct
@@ -237,7 +235,6 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
     txn = models.AdaptiveTransaction(
         action=action,
         is_sandbox=is_sandbox,
-        is_credit_card=is_credit_card,
         raw_request=pairs['_raw_request'],
         raw_response=pairs['_raw_response'],
         response_time=pairs['_response_time'],

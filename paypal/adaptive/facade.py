@@ -42,7 +42,6 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
     return (
         txn.redirect_url,
         txn.correlation_id,
-        txn.payment_method
     )
 
 
