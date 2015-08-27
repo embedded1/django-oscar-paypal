@@ -99,6 +99,12 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         self.checkout_session.store_pay_transaction_id(transaction_id)
 
+    def store_pay_payment_method(self, payment_method):
+        """
+        Determine if the payment was done with Paypal account or with credit card
+        """
+        self.checkout_session.store_pay_payment_method(payment_method)
+
     def get_selected_shipping_method(self):
         key = self.package.upc
         #make special key for return to store checkout where we need to
@@ -275,8 +281,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
+        redirect_url, pay_correlation_id, payment_method = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
+        self.store_pay_payment_method(payment_method)
         return redirect_url
 
 
@@ -441,8 +448,9 @@ class GuestRedirectView(RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
+        redirect_url, pay_correlation_id, payment_method = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
+        self.store_pay_payment_method(payment_method)
         return redirect_url
 
 class SuccessResponseView(PaymentDetailsView):
@@ -538,6 +546,8 @@ class SuccessResponseView(PaymentDetailsView):
         """
         return self.checkout_session.get_partner_share()
 
+    def get_payment_method(self):
+        return self.checkout_session.get_pay_payment_method()
 
     def handle_payment(self, order_number, total, **kwargs):
         """
@@ -552,19 +562,21 @@ class SuccessResponseView(PaymentDetailsView):
         """
         # Record payment source and event
         partner_share = self.get_partner_share()
+        payment_method = self.get_payment_method()
         source_type, is_created = SourceType.objects.get_or_create(name='PayPal')
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
                         amount_debited=partner_share,
                         amount_refunded=total.incl_tax - partner_share,
-                        reference=self.pay_transaction_id)
+                        reference=self.pay_transaction_id,
+                        label=payment_method)
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
         #delete partner's share from session
         self.checkout_session.delete_partner_share()
         #delete the paypal_ap attributes from session
-        self.checkout_session.delete_pay_transaction_id()
+        self.checkout_session.delete_paypal_ap()
 
 
     def unfreeze_basket(self, basket_id):

@@ -41,7 +41,8 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
     #Return some Pay request important attributes
     return (
         txn.redirect_url,
-        txn.correlation_id
+        txn.correlation_id,
+        txn.payment_method
     )
 
 

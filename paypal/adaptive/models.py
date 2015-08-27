@@ -64,3 +64,9 @@ class AdaptiveTransaction(base.ResponseModel):
         else:
             url = 'https://www.paypal.com/cgi-bin/webscr?cmd=_ap-payment&paykey=%s'
         return url % self.pay_key
+
+    @property
+    def payment_method(self):
+        if self.is_credit_card:
+            return 'Credit Card'
+        return 'PayPal Account'
