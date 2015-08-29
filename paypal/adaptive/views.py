@@ -163,11 +163,10 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
 
             shipping_charge_incl_revenue = selected_method.ship_charge_incl_revenue
-            carrier = selected_method.carrier.upper()
             #if partner pays for postage we need to transfer him the postage costs
             #and the bank fee we received for the postage, which is the bank_fee - 0.3
             #otherwise, we only transfer him 0.3
-            if partner_order_payment_settings.postage_paid_by_partner(carrier):
+            if partner_order_payment_settings.postage_paid_by_partner(selected_method.carrier):
                 partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
                 partner_share += selected_method.ship_charge_excl_revenue + partner_bank_fee
             else:
