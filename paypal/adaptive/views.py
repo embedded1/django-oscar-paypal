@@ -399,17 +399,19 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                            extra_tags='safe block')
             return False
 
-        usendhome_country_code = shipping_address.country.iso_3166_1_a2
+        #we support drop shipping, bypass country code validation as PayPal users
+        #can't select different country than their home country
+        #usendhome_country_code = shipping_address.country.iso_3166_1_a2
         #check country match
-        if country_code != usendhome_country_code:
-            logger.error("PayPal: Unmatched shipping country, paypal country code:%s, "
-                         "USendHome country code: %s" % (country_code, usendhome_country_code))
-            # unmatched country - redirect to basket page with warning message
-            messages.error(self.request, _("The destination country doesn't match any destination country on"
-                                           " file at PayPal.<br/>"
-                                           "Make sure you deliver your package to an address listed on your PayPal account."),
-                            extra_tags='safe block')
-            return False
+        #if country_code != usendhome_country_code:
+        #    logger.error("PayPal: Unmatched shipping country, paypal country code:%s, "
+        #                 "USendHome country code: %s" % (country_code, usendhome_country_code))
+        #    # unmatched country - redirect to basket page with warning message
+        #    messages.error(self.request, _("The destination country doesn't match any destination country on"
+        #                                   " file at PayPal.<br/>"
+        #                                   "Make sure you deliver your package to an address listed on your PayPal account."),
+        #                    extra_tags='safe block')
+        #    return False
 
         return True
 
