@@ -162,13 +162,13 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
                 insurance_charge_incl_revenue = selected_method.ins_charge_incl_revenue
 
-            shipping_charge_incl_revenue = selected_method.ship_charge_incl_revenue
+            shipping_charge_incl_revenue = selected_method.shipping_method_cost()
             #if partner pays for postage we need to transfer him the postage costs
             #and the bank fee we received for the postage, which is the bank_fee - 0.3
             #otherwise, we only transfer him 0.3
             if partner_order_payment_settings.postage_paid_by_partner(selected_method.carrier):
                 partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
-                partner_share += selected_method.ship_charge_excl_revenue + partner_bank_fee
+                partner_share += selected_method.partner_postage_cost() + partner_bank_fee
             else:
                 partner_share += D('0.3')
 
