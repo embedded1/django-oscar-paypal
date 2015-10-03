@@ -10,7 +10,8 @@ from paypal.adaptive.exceptions import (
     EmptyBasketException, MissingShippingAddressException,
     MissingShippingMethodException, InvalidBasket, PayPalFailedValidationException)
 from paypal.adaptive.facade import (
-    get_pay_request_attrs, fetch_account_info )
+    get_pay_request_attrs, fetch_account_info,
+    set_transaction_details)
 from paypal.express.facade import fetch_address_details
 from django.contrib import messages
 from django.utils import six
@@ -281,9 +282,13 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
+        redirect_url, pay_correlation_id, pay_key = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
         self.store_pay_payment_method('PayPal Account')
+        #add shipping address to the transaction before we redirect to PayPal
+        set_transaction_details(
+            pay_key=pay_key,
+            shipping_address=customer_shipping_address)
         return redirect_url
 
 

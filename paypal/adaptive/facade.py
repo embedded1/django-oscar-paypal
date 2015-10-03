@@ -2,7 +2,7 @@ from django.conf import settings
 from django.contrib.sites.models import Site
 from django.core.urlresolvers import reverse
 from paypal.adaptive.gateway import (
-    pay, payment_details, #set_payment_option,
+    pay, payment_details, set_payment_option,
     execute_payment, get_account_info
 )
 
@@ -42,6 +42,7 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
     return (
         txn.redirect_url,
         txn.correlation_id,
+        txn.pay_key
     )
 
 
@@ -50,6 +51,12 @@ def fetch_transaction_details(pay_key):
     Fetch the completed details about the PayPal transaction.
     """
     return payment_details(pay_key)
+
+def set_transaction_details(pay_key, shipping_address, basket=None):
+    return set_payment_option(
+        basket=basket,
+        pay_key=pay_key,
+        shipping_address=shipping_address)
 
 def fetch_account_info(first_name, last_name, email):
     return get_account_info(first_name, last_name, email)

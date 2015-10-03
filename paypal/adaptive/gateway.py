@@ -48,7 +48,7 @@ def payment_details(pay_key):
     params = [("payKey", pay_key)]
     return _request(Payment_Details, params)
 
-def set_payment_option(basket, pay_key, receiver_email, shipping_address=None):
+def set_payment_option(basket, pay_key, shipping_address=None):
     """
     Submit shipping address and order items to PayPal
     """
@@ -56,54 +56,55 @@ def set_payment_option(basket, pay_key, receiver_email, shipping_address=None):
     params = [
         ("payKey", pay_key),
         #("senderOptions.addressOverride", 'false'),
-        ('receiverOptions[0].receiver.email', receiver_email),
+        #('receiverOptions[0].receiver.email', receiver_email),
     ]
 
-    #if shipping_address:
-    #    #add shipping address
-    #    params.append(('senderOptions.shippingAddress.addresseeName', shipping_address.name))
-    #    params.append(('senderOptions.shippingAddress.street1', shipping_address.line1))
-    #    params.append(('senderOptions.shippingAddress.street2', shipping_address.line2 or ' '))
-    #    params.append(('senderOptions.shippingAddress.city', shipping_address.line4))
-    #    params.append(('senderOptions.shippingAddress.state', shipping_address.state or ' '))
-    #    params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode or ' '))
-    #    params.append(('senderOptions.shippingAddress.country', shipping_address.country.iso_3166_1_a2))
+    if shipping_address:
+        #add shipping address
+        params.append(('senderOptions.shippingAddress.addresseeName', shipping_address.name))
+        params.append(('senderOptions.shippingAddress.street1', shipping_address.line1))
+        params.append(('senderOptions.shippingAddress.street2', shipping_address.line2 or ' '))
+        params.append(('senderOptions.shippingAddress.city', shipping_address.line4))
+        params.append(('senderOptions.shippingAddress.state', shipping_address.state or ' '))
+        params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode or ' '))
+        params.append(('senderOptions.shippingAddress.country', shipping_address.country.iso_3166_1_a2))
 
-    index = 0
-    for index, line in enumerate(basket.all_lines()):
-        product = line.product
-        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, product.get_title()))
-        params.append(('receiverOptions[0].invoiceData.item[%d].identifier' % index, product.upc if
-                                                         product.upc else ''))
-        # Note, we don't include discounts here - they are handled as separate
-        # lines - see below
-        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
-            line.unit_price_incl_tax)))
-        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, line.quantity))
+    if basket:
+        index = 0
+        for index, line in enumerate(basket.all_lines()):
+            product = line.product
+            params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, product.get_title()))
+            params.append(('receiverOptions[0].invoiceData.item[%d].identifier' % index, product.upc if
+                                                             product.upc else ''))
+            # Note, we don't include discounts here - they are handled as separate
+            # lines - see below
+            params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+                line.unit_price_incl_tax)))
+            params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, line.quantity))
 
-    # Iterate over the 3 types of discount that can occur
-    for discount in basket.offer_discounts:
-        index += 1
-        name = _("Special Offer: %s") % discount['name']
-        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
-        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
-            -discount['discount'])))
-        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
-    for discount in basket.voucher_discounts:
-        index += 1
-        name = "%s (%s)" % (discount['voucher'].name,
-                            discount['voucher'].code)
-        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
-        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
-            -discount['discount'])))
-        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
-    for discount in basket.shipping_discounts:
-        index += 1
-        name = _("Shipping Offer: %s") % discount['name']
-        params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
-        params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
-            -discount['discount'])))
-        params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
+        # Iterate over the 3 types of discount that can occur
+        for discount in basket.offer_discounts:
+            index += 1
+            name = _("Special Offer: %s") % discount['name']
+            params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
+            params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+                -discount['discount'])))
+            params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
+        for discount in basket.voucher_discounts:
+            index += 1
+            name = "%s (%s)" % (discount['voucher'].name,
+                                discount['voucher'].code)
+            params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
+            params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+                -discount['discount'])))
+            params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
+        for discount in basket.shipping_discounts:
+            index += 1
+            name = _("Shipping Offer: %s") % discount['name']
+            params.append(('receiverOptions[0].invoiceData.item[%d].name' % index, name))
+            params.append(('receiverOptions[0].invoiceData.item[%d].price' % index, _format_currency(
+                -discount['discount'])))
+            params.append(('receiverOptions[0].invoiceData.item[%d].itemCount' % index, 1))
 
     return _request(Set_Payment_Options, params)
 
