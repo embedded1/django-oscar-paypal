@@ -243,6 +243,11 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         else:
             params['action'] = 'PAY_PRIMARY'
 
+    def add_shipping_address_to_tran(self, pay_key, shipping_address):
+        set_transaction_details(
+            pay_key=pay_key,
+            shipping_address=shipping_address)
+
     def _get_redirect_url(self, **kwargs):
         if self.basket.is_empty:
             raise EmptyBasketException()
@@ -286,7 +291,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         self.store_pay_transaction_id(pay_correlation_id)
         self.store_pay_payment_method('PayPal Account')
         #add shipping address to the transaction before we redirect to PayPal
-        set_transaction_details(
+        self.add_shipping_address_to_tran(
             pay_key=pay_key,
             shipping_address=customer_shipping_address)
         return redirect_url
@@ -455,9 +460,13 @@ class GuestRedirectView(RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id = get_pay_request_attrs(**params)
+        redirect_url, pay_correlation_id, pay_key = get_pay_request_attrs(**params)
         self.store_pay_transaction_id(pay_correlation_id)
         self.store_pay_payment_method('Credit Card')
+        #add shipping address to the transaction before we redirect to PayPal
+        self.add_shipping_address_to_tran(
+            pay_key=pay_key,
+            shipping_address=customer_shipping_address)
         return redirect_url
 
 class SuccessResponseView(PaymentDetailsView):

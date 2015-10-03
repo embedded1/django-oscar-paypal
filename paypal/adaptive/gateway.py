@@ -53,21 +53,25 @@ def set_payment_option(basket, pay_key, shipping_address=None):
     Submit shipping address and order items to PayPal
     """
 
-    params = [
-        ("payKey", pay_key),
-        #("senderOptions.addressOverride", 'false'),
-        #('receiverOptions[0].receiver.email', receiver_email),
-    ]
+    params = [("payKey", pay_key)]
 
     if shipping_address:
         #add shipping address
         params.append(('senderOptions.shippingAddress.addresseeName', shipping_address.name))
         params.append(('senderOptions.shippingAddress.street1', shipping_address.line1))
-        params.append(('senderOptions.shippingAddress.street2', shipping_address.line2 or ' '))
         params.append(('senderOptions.shippingAddress.city', shipping_address.line4))
-        params.append(('senderOptions.shippingAddress.state', shipping_address.state or ' '))
-        params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode or ' '))
+        params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode))
         params.append(('senderOptions.shippingAddress.country', shipping_address.country.iso_3166_1_a2))
+        if shipping_address.line2:
+            params.append(('senderOptions.shippingAddress.street2', shipping_address.line2))
+        if shipping_address.state:
+            params.append(('senderOptions.shippingAddress.state', shipping_address.state))
+        #add phone number
+        if shipping_address.phone_number:
+            params.append(('senderOptions.shippingAddress.phone.countryCode', str(shipping_address.phone_number.country_code)))
+            params.append(('senderOptions.shippingAddress.phone.phoneNumber',
+                           ''.join(i for i in shipping_address.phone_number.as_national if i.isdigit())))
+            params.append(('senderOptions.shippingAddress.phone.type', 'MOBILE'))
 
     if basket:
         index = 0
