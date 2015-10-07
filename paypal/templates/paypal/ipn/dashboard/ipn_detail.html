@@ -1,0 +1,46 @@
+{% extends 'dashboard/layout.html' %}
+{% load currency_filters %}
+{% load i18n %}
+{% load url from future %}
+
+{% block title %}
+    {% trans "PayPal IPN message" %} {{ ipn_res.transaction_id }} | {{ block.super }}
+{% endblock %}
+
+{% block breadcrumbs %}
+    <ul class="breadcrumb">
+        <li>
+            <a href="{% url 'dashboard:index' %}">{% trans "Dashboard" %}</a>
+            <span class="divider">/</span>
+        </li>
+        <li>
+            <a href="{% url 'paypal-ipn-list' %}">{% trans "PayPal Adaptive Payments" %}</a>
+            <span class="divider">/</span>
+        </li>
+        <li class="active">
+            {% blocktrans with id=ipn_res.transaction_id %}
+                Transaction {{ id }}
+            {% endblocktrans %}
+        </li>
+    </ul>
+{% endblock %}
+
+{% block headertext %}
+    {% blocktrans with id=ipn_res.transaction_id %}
+        Transaction {{ id }}
+    {% endblocktrans %}
+{% endblock %}
+
+{% block dashboard_content %}
+    <table class="table table-striped table-bordered">
+        <tbody>
+            <tr><th>{% trans "PAY transaction ID" %}</th><td>{{ ipn_res.transaction_id }}</td></tr>
+            <tr><th>{% trans "Payment status" %}</th><td>{{ ipn_res.payment_status }}</td></tr>
+            <tr><th>{% trans "Fraud management filters" %}</th><td>{{ ipn_res.fraud_management_filters|default:"-" }}</td></tr>
+            <tr><th>{% trans "Using sandbox" %}</th><td>{{ ipn_res.is_sandbox }}</td></tr>
+            <tr><th>{% trans "Raw request" %}</th><td>{{ ipn_res.request|safe }}</td></tr>
+            <tr><th>{% trans "Raw response" %}</th><td>{{ ipn_res.response|safe }}</td></tr>
+            <tr><th>{% trans "Date" %}</th><td>{{ ipn_res.date_created }}</td></tr>
+        </tbody>
+    </table>
+{% endblock dashboard_content %}
