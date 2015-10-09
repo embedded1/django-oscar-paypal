@@ -96,9 +96,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
     def store_pay_key(self, pay_key):
         """
-        We save Pay request correlation id to identify the Pay transaction
+        We save Pay request pay_key to identify the Pay transaction
         """
-        self.checkout_session.store_pay_transaction_id(transaction_id)
+        self.checkout_session.store_pay_key(pay_key)
 
     def store_pay_payment_method(self, payment_method):
         """
@@ -286,8 +286,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id, pay_key = get_pay_request_attrs(**params)
-        self.store_pay_transaction_id(pay_correlation_id)
+        redirect_url, pay_key = get_pay_request_attrs(**params)
+        self.store_pay_key(pay_key)
         self.store_pay_payment_method('PayPal Account')
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
@@ -466,8 +466,8 @@ class GuestRedirectView(RedirectView):
         params['receivers'] = self.get_receivers()
         self.align_receivers(params)
 
-        redirect_url, pay_correlation_id, pay_key = get_pay_request_attrs(**params)
-        self.store_pay_transaction_id(pay_correlation_id)
+        redirect_url, pay_key = get_pay_request_attrs(**params)
+        self.store_pay_key_id(pay_key)
         self.store_pay_payment_method('Credit Card')
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
@@ -481,11 +481,11 @@ class SuccessResponseView(PaymentDetailsView):
     err_msg = _("A problem occurred communicating with PayPal "
                 "- please try again later")
 
-    def get_pay_transaction_id(self):
-        self.pay_transaction_id = self.checkout_session.get_pay_transaction_id()
-        if self.pay_transaction_id is None:
+    def get_pay_key(self):
+        self.pay_key = self.checkout_session.get_pay_key()
+        if self.pay_key is None:
             # Manipulation - redirect to basket page with warning message
-            logger.error("SuccessResponseView: Missing pay transaction id in session")
+            logger.error("SuccessResponseView: Missing pay_key in session")
             messages.error(
                 self.request,
                 _("Unable to determine PayPal transaction details."))
@@ -519,8 +519,8 @@ class SuccessResponseView(PaymentDetailsView):
         We fetch the txn details again and then proceed with oscar's standard
         payment details view for placing the order.
         """
-        self.get_pay_transaction_id()
-        if self.pay_transaction_id is None:
+        self.get_pay_key()
+        if self.pay_key is None:
             return HttpResponseRedirect(reverse('customer:pending-packages'))
         error_msg = _(
             "A problem occurred communicating with PayPal "
@@ -540,7 +540,7 @@ class SuccessResponseView(PaymentDetailsView):
         #pending packages page
         if self.has_error:
             logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
-                            " has already benn carried")
+                            " has already been carried")
             return HttpResponseRedirect(reverse('customer:pending-packages'))
         #Order placement process has successfully finished,
         #redirect to thank you page
@@ -591,7 +591,7 @@ class SuccessResponseView(PaymentDetailsView):
                         amount_allocated=total.incl_tax,
                         amount_debited=partner_share,
                         amount_refunded=total.incl_tax - partner_share,
-                        reference=self.pay_transaction_id,
+                        reference=self.pay_key,
                         label=payment_method)
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
