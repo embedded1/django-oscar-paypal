@@ -30,10 +30,11 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
         scheme, host, reverse('paypal-cancel-response', kwargs={
             'basket_id': basket.id}))
     if getattr(settings, 'PAYPAL_SANDBOX_MODE', False):
-        ipn_url = settings.PAYPAL_SANDBOX_IPN_URL
+        ipn_url = settings.PAYPAL_SANDBOX_IPN_URL % basket.id
     else:
         ipn_url = '%s://%s%s' % (
-            scheme, host, reverse('webhooks:paypal-ipn'))
+                scheme, host, reverse('webhooks:paypal-ipn', kwargs={
+                    'basket_id': basket.id}))
 
     #first create the Pay transaction
     txn = pay(receivers=receivers,

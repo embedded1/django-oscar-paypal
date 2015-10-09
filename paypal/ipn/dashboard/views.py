@@ -2,14 +2,14 @@ from django.views import generic
 from paypal.ipn import models
 
 
-class IPNResponseListView(generic.ListView):
-    model = models.IPNResponse
-    template_name = 'paypal/ipn/dashboard/ipn_list.html'
+class PaymentsListView(generic.ListView):
+    model = models.PaymentMessage
+    template_name = 'paypal/ipn/dashboard/payment/messages_list.html'
     context_object_name = 'ipn_responses'
 
 
-class IPNResponseDetailView(generic.DetailView):
-    model = models.IPNResponse
-    template_name = 'paypal/ipn/dashboard/ipn_detail.html'
+class PaymentDetailView(generic.DetailView):
+    model = models.PaymentMessage
+    template_name = 'paypal/ipn/dashboard/payment/message_detail.html'
     context_object_name = 'ipn_res'
 

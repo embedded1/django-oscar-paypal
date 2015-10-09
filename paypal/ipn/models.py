@@ -1,11 +1,7 @@
 from django.db import models
-from paypal import base
+from . import base
 
-class IPNResponse(base.ResponseModel):
-    is_sandbox = models.BooleanField(
-        default=True)
-    transaction_id = models.CharField(
-        max_length=32, db_index=True)
+class PaymentMessage(base.IPNMessageModel):
     payment_status = models.CharField(
         max_length=32, db_index=True)
     fraud_management_filters = models.CharField(

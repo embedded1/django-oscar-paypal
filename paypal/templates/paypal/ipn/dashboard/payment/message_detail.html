@@ -34,11 +34,10 @@
 {% block dashboard_content %}
     <table class="table table-striped table-bordered">
         <tbody>
-            <tr><th>{% trans "PAY transaction ID" %}</th><td>{{ ipn_res.transaction_id }}</td></tr>
+            <tr><th>{% trans "Transaction ID" %}</th><td>{{ ipn_res.transaction_id }}</td></tr>
             <tr><th>{% trans "Payment status" %}</th><td>{{ ipn_res.payment_status }}</td></tr>
             <tr><th>{% trans "Fraud management filters" %}</th><td>{{ ipn_res.fraud_management_filters|default:"-" }}</td></tr>
             <tr><th>{% trans "Using sandbox" %}</th><td>{{ ipn_res.is_sandbox }}</td></tr>
-            <tr><th>{% trans "Raw request" %}</th><td>{{ ipn_res.request|safe }}</td></tr>
             <tr><th>{% trans "Raw response" %}</th><td>{{ ipn_res.response|safe }}</td></tr>
             <tr><th>{% trans "Date" %}</th><td>{{ ipn_res.date_created }}</td></tr>
         </tbody>
