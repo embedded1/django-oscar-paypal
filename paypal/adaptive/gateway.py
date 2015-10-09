@@ -41,11 +41,11 @@ PAY, CREATE, PAY_PRIMARY = 'PAY', 'CREATE', 'PAY_PRIMARY'
 def _format_currency(amt):
     return amt.quantize(D('0.01'))
 
-def payment_details(pay_key):
+def payment_details(txn_id):
     """
     Fetch the payment details for a given transaction
     """
-    params = [("payKey", pay_key)]
+    params = [("transactionId", txn_id)]
     return _request(Payment_Details, params)
 
 def set_payment_option(basket, pay_key, shipping_address=None):
@@ -254,8 +254,8 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
 
     txn.save()
 
-    if not txn.is_successful or\
-       action == Pay and not txn.is_payment_successful:
+    if not txn.is_successful or \
+        action == Pay and not txn.is_payment_successful:
         msg = "Error %s - %s" % (txn.error_code, txn.error_message)
         logger.error(msg)
         raise exceptions.PayPalError(msg)

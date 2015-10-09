@@ -29,12 +29,12 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
     cancel_url = '%s://%s%s' % (
         scheme, host, reverse('paypal-cancel-response', kwargs={
             'basket_id': basket.id}))
-    if getattr(settings, 'PAYPAL_SANDBOX_MODE', False):
-        ipn_url = settings.PAYPAL_SANDBOX_IPN_URL % basket.id
-    else:
-        ipn_url = '%s://%s%s' % (
-                scheme, host, reverse('webhooks:paypal-ipn', kwargs={
-                    'basket_id': basket.id}))
+    #if getattr(settings, 'PAYPAL_SANDBOX_MODE', False):
+    #    ipn_url = settings.PAYPAL_SANDBOX_IPN_URL % basket.id
+    #else:
+    #    ipn_url = '%s://%s%s' % (
+    #            scheme, host, reverse('webhooks:paypal-ipn', kwargs={
+    #                'basket_id': basket.id}))
 
     #first create the Pay transaction
     txn = pay(receivers=receivers,
@@ -42,7 +42,6 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
               currency=currency,
               return_url=return_url,
               cancel_url=cancel_url,
-              ipn_url=ipn_url,
               sender_email=sender_email)
 
     #Return some Pay request important attributes
@@ -53,11 +52,11 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
     )
 
 
-def fetch_transaction_details(pay_key):
+def fetch_transaction_details(txn_id):
     """
     Fetch the completed details about the PayPal transaction.
     """
-    return payment_details(pay_key)
+    return payment_details(txn_id)
 
 def set_transaction_details(pay_key, shipping_address, basket=None):
     return set_payment_option(
