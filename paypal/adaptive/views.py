@@ -94,7 +94,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
             return url
 
-    def store_pay_transaction_id(self, transaction_id):
+    def store_pay_key(self, pay_key):
         """
         We save Pay request correlation id to identify the Pay transaction
         """
