@@ -8,7 +8,7 @@ class PaymentMessageAdmin(admin.ModelAdmin):
     readonly_fields = [
         'is_sandbox',
         'transaction_id',
-        'raw_response',
+        'raw_message',
         'payment_status',
         'date_created',
     ]

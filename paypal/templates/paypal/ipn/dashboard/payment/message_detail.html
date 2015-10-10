@@ -4,7 +4,7 @@
 {% load url from future %}
 
 {% block title %}
-    {% trans "PayPal IPN message" %} {{ ipn_res.transaction_id }} | {{ block.super }}
+    {% trans "PayPal IPN message" %} {{ payment_message.transaction_id }} | {{ block.super }}
 {% endblock %}
 
 {% block breadcrumbs %}
@@ -14,11 +14,11 @@
             <span class="divider">/</span>
         </li>
         <li>
-            <a href="{% url 'paypal-ipn-list' %}">{% trans "PayPal Adaptive Payments" %}</a>
+            <a href="{% url 'paypal-ipn-payment-list' %}">{% trans "PayPal Adaptive Payments" %}</a>
             <span class="divider">/</span>
         </li>
         <li class="active">
-            {% blocktrans with id=ipn_res.transaction_id %}
+            {% blocktrans with id=payment_message.transaction_id %}
                 Transaction {{ id }}
             {% endblocktrans %}
         </li>
@@ -26,7 +26,7 @@
 {% endblock %}
 
 {% block headertext %}
-    {% blocktrans with id=ipn_res.transaction_id %}
+    {% blocktrans with id=payment_message.transaction_id %}
         Transaction {{ id }}
     {% endblocktrans %}
 {% endblock %}
@@ -34,12 +34,12 @@
 {% block dashboard_content %}
     <table class="table table-striped table-bordered">
         <tbody>
-            <tr><th>{% trans "Transaction ID" %}</th><td>{{ ipn_res.transaction_id }}</td></tr>
-            <tr><th>{% trans "Payment status" %}</th><td>{{ ipn_res.payment_status }}</td></tr>
-            <tr><th>{% trans "Fraud management filters" %}</th><td>{{ ipn_res.fraud_management_filters|default:"-" }}</td></tr>
-            <tr><th>{% trans "Using sandbox" %}</th><td>{{ ipn_res.is_sandbox }}</td></tr>
-            <tr><th>{% trans "Raw response" %}</th><td>{{ ipn_res.response|safe }}</td></tr>
-            <tr><th>{% trans "Date" %}</th><td>{{ ipn_res.date_created }}</td></tr>
+            <tr><th>{% trans "Transaction ID" %}</th><td>{{ payment_message.transaction_id }}</td></tr>
+            <tr><th>{% trans "Payment status" %}</th><td>{{ payment_message.payment_status }}</td></tr>
+            <tr><th>{% trans "Fraud management filters" %}</th><td>{{ payment_message.fraud_management_filters|default:"-" }}</td></tr>
+            <tr><th>{% trans "Using sandbox" %}</th><td>{{ payment_message.is_sandbox }}</td></tr>
+            <tr><th>{% trans "Raw message" %}</th><td>{{ payment_message.message|safe }}</td></tr>
+            <tr><th>{% trans "Date" %}</th><td>{{ payment_message.date_created }}</td></tr>
         </tbody>
     </table>
 {% endblock dashboard_content %}

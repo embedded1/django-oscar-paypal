@@ -11,9 +11,9 @@ class IPNDashboardApplication(Application):
 
     def get_urls(self):
         urlpatterns = patterns('',
-            url(r'^ipn/payments/$', self.list_view.as_view(),
+            url(r'^payments/$', self.list_view.as_view(),
                 name='paypal-ipn-payment-list'),
-            url(r'^ipn/payment/(?P<pk>\d+)/$', self.detail_view.as_view(),
+            url(r'^payment/(?P<pk>\d+)/$', self.detail_view.as_view(),
                 name='paypal-ipn-payment-detail'),
         )
         return self.post_process_urls(urlpatterns)

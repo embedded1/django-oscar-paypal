@@ -313,9 +313,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         #check shipping address only for non merchant addresses
         #this check is not needed for US addresses where the package is returned to store
-        if not return_to_merchant:
-            if not self.validate_shipping_address(sender_email, sender_shipping_address):
-                return False
+        #if not return_to_merchant:
+        #    if not self.validate_shipping_address(sender_email, sender_shipping_address):
+        #        return False
 
         #all went fine continue with payment
         return True
@@ -415,19 +415,19 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                            extra_tags='safe block')
             return False
 
-        #we support drop shipping, bypass country code validation as PayPal users
+
         #can't select different country than their home country
-        #usendhome_country_code = shipping_address.country.iso_3166_1_a2
+        usendhome_country_code = shipping_address.country.iso_3166_1_a2
         #check country match
-        #if country_code != usendhome_country_code:
-        #    logger.error("PayPal: Unmatched shipping country, paypal country code:%s, "
-        #                 "USendHome country code: %s" % (country_code, usendhome_country_code))
-        #    # unmatched country - redirect to basket page with warning message
-        #    messages.error(self.request, _("The destination country doesn't match any destination country on"
-        #                                   " file at PayPal.<br/>"
-        #                                   "Make sure you deliver your package to an address listed on your PayPal account."),
-        #                    extra_tags='safe block')
-        #    return False
+        if country_code != usendhome_country_code:
+            logger.error("PayPal: Unmatched shipping country, paypal country code:%s, "
+                         "USendHome country code: %s" % (country_code, usendhome_country_code))
+            # unmatched country - redirect to basket page with warning message
+            messages.error(self.request, _("The destination country doesn't match any destination country on"
+                                           " file at PayPal.<br/>"
+                                           "Make sure you deliver your package to an address listed on your PayPal account."),
+                            extra_tags='safe block')
+            return False
 
         return True
 
@@ -467,7 +467,7 @@ class GuestRedirectView(RedirectView):
         self.align_receivers(params)
 
         redirect_url, pay_key = get_pay_request_attrs(**params)
-        self.store_pay_key_id(pay_key)
+        self.store_pay_key(pay_key)
         self.store_pay_payment_method('Credit Card')
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(

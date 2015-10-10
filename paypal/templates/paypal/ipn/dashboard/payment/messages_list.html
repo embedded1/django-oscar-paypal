@@ -4,7 +4,7 @@
 {% load url from future %}
 
 {% block title %}
-    {% trans "PayPal IPN responses" %} | {{ block.super }}
+    {% trans "PayPal IPN payment messages" %} | {{ block.super }}
 {% endblock %}
 
 {% block breadcrumbs %}
@@ -14,43 +14,43 @@
             <span class="divider">/</span>
         </li>
         <li>
-            <a href="{% url 'paypal-ipn-list' %}">{% trans "PayPal IPN" %}</a>
+            <a href="{% url 'paypal-ipn-payment-list' %}">{% trans "PayPal Payment IPN messages" %}</a>
             <span class="divider">/</span>
         </li>
-        <li class="active">{% trans "Responses" %}</li>
+        <li class="active">{% trans "Messages" %}</li>
     </ul>
 {% endblock %}
 
 {% block headertext %}
-    {% trans "PayPal IPN responses" %}
+    {% trans "PayPal IPN payment messages" %}
 {% endblock %}
 
 {% block dashboard_content %}
 
-    {% if transactions %}
+    {% if payment_messages %}
         <table class="table table-striped table-bordered">
             <thead>
                 <tr>
                     <th>{% trans "Transaction ID" %}</th>
                     <th>{% trans "Payment status" %}</th>
                     <th>{% trans "Fraud management filters" %}</th>
-                    <th>{% trans "Date message" %}</th>
+                    <th>{% trans "Date received" %}</th>
                 </tr>
             </thead>
             <tbody>
-                {% for ipn_res in ipn_responses %}
+                {% for payment_message in payment_messages %}
                     <tr>
-                        <td><a href="{% url 'paypal-ipn-detail' ipn_res.id %}">{{ ipn_res.transaction_id }}</a></td>
-                        <td>{{ ipn_res.payment_status }}</td>
-                        <td>{{ ipn_res.fraud_management_filters|default:"-" }}</td>
-                        <td>{{ ipn_res.date_created }}</td>
+                        <td><a href="{% url 'paypal-ipn-payment-detail' payment_message.id %}">{{ payment_message.transaction_id }}</a></td>
+                        <td>{{ payment_message.payment_status }}</td>
+                        <td>{{ payment_message.fraud_management_filters|default:"-" }}</td>
+                        <td>{{ payment_message.date_created }}</td>
                     </tr>
                 {% endfor %}
             </tbody>
         </table>
         {% include "partials/pagination.html" %}
     {% else %}
-        <p>{% trans "No IPN responses have been received yet." %}</p>
+        <p>{% trans "No payment IPN messages have been received yet." %}</p>
     {% endif %}
 
 {% endblock dashboard_content %}

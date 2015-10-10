@@ -1,6 +1,5 @@
 from django.utils.encoding import force_text
 import urlparse
-from django.utils.translation import ugettext_lazy as _
 
 from django.db import models
 
@@ -8,7 +7,7 @@ from django.db import models
 class IPNMessageModel(models.Model):
 
     # Debug information
-    raw_response = models.TextField(max_length=512)
+    raw_message = models.TextField(max_length=512)
     is_sandbox = models.BooleanField(default=True)
     transaction_id = models.CharField(max_length=32, db_index=True)
     date_created = models.DateTimeField(auto_now_add=True)
@@ -18,9 +17,9 @@ class IPNMessageModel(models.Model):
         ordering = ('-date_created',)
         app_label = 'paypal'
 
-    def response(self):
+    def message(self):
         return self._as_dl(self.context)
-    response.allow_tags = True
+    message.allow_tags = True
 
     def _as_table(self, params):
         rows = []
@@ -36,7 +35,7 @@ class IPNMessageModel(models.Model):
 
     @property
     def context(self):
-        return urlparse.parse_qs(self.raw_response)
+        return urlparse.parse_qs(self.raw_message)
 
     def value(self, key, default=None):
         ctx = self.context
