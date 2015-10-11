@@ -3,7 +3,7 @@ from django.contrib.sites.models import Site
 from django.core.urlresolvers import reverse
 from paypal.adaptive.gateway import (
     pay, payment_details, set_payment_option,
-    execute_payment, get_account_info
+    execute_payment, get_account_info, refund_payment
 )
 
 
@@ -55,6 +55,9 @@ def fetch_transaction_details(txn_id):
     Fetch the completed details about the PayPal transaction.
     """
     return payment_details(txn_id)
+
+def refund_transaction(pay_key):
+    return refund_payment(pay_key)
 
 def set_transaction_details(pay_key, shipping_address, basket=None):
     return set_payment_option(

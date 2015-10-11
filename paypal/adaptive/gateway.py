@@ -34,6 +34,7 @@ Payment_Details = 'PaymentDetails'
 Set_Payment_Options = 'SetPaymentOptions'
 Execute_Payment = 'ExecutePayment'
 Get_Verified_Status = 'GetVerifiedStatus'
+REFUND = 'Refund'
 
 #Pay actions
 PAY, CREATE, PAY_PRIMARY = 'PAY', 'CREATE', 'PAY_PRIMARY'
@@ -47,6 +48,13 @@ def payment_details(txn_id):
     """
     params = [("transactionId", txn_id)]
     return _request(Payment_Details, params)
+
+def refund_payment(pay_key):
+    """
+    refund full amount
+    """
+    params = [("payKey", pay_key)]
+    return _request(REFUND, params)
 
 def set_payment_option(basket, pay_key, shipping_address=None):
     """
