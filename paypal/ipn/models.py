@@ -1,5 +1,5 @@
 from django.db import models
-from . import base
+from paypal import base
 from django.utils.translation import ugettext_lazy as _
 
 class PaymentMessage(base.IPNMessageModel):

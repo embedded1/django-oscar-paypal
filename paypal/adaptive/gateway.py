@@ -34,7 +34,7 @@ Payment_Details = 'PaymentDetails'
 Set_Payment_Options = 'SetPaymentOptions'
 Execute_Payment = 'ExecutePayment'
 Get_Verified_Status = 'GetVerifiedStatus'
-REFUND = 'Refund'
+Refund = 'Refund'
 
 #Pay actions
 PAY, CREATE, PAY_PRIMARY = 'PAY', 'CREATE', 'PAY_PRIMARY'
@@ -54,7 +54,7 @@ def refund_payment(pay_key):
     refund full amount
     """
     params = [("payKey", pay_key)]
-    return _request(REFUND, params)
+    return _request(Refund, params)
 
 def set_payment_option(basket, pay_key, shipping_address=None):
     """
