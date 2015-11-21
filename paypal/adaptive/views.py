@@ -40,7 +40,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     to PayPal's adaptive payments to perform the transaction.
     """
     permanent = False
-
+    partner_share_excluded_offers = ['Referral Program']
     # Setting to distinguish if the site has already collected a shipping
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
@@ -124,6 +124,18 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         code = self.checkout_session.shipping_method_code(self.basket)
         return repo.get_shipping_method_by_code(code)
 
+    def get_services_discounts(self):
+        """
+        Here we exclude the referral program discount as it shouldn't affect
+        partner's share, this only apply to us
+        """
+        offer_discounts = self.basket.offer_discounts
+        services_discounts = D('0.00')
+        for offer_discount in offer_discounts:
+            if offer_discount['name'] not in self.partner_share_excluded_offers:
+                services_discounts += offer_discount['discount']
+        return services_discounts
+
     def calc_partner_share(self, partner_order_payment_settings):
         """
         Partner's share is calculated as follows:
@@ -137,7 +149,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
         partner_share = shipping_discounts = shipping_charge_incl_revenue = bank_fee = D('0.0')
         order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
-        services_discounts = sum(offer['discount'] for offer in self.basket.offer_discounts) or D('0.0')
+        services_discounts = self.get_services_discounts()
 
         #selected shipping method is not available for prepaid return labels
         if not self.checkout_session.is_return_to_store_prepaid_enabled():
