@@ -370,7 +370,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
             # unverified payer - redirect to pending packages page with error message
             messages.error(self.request, _("Your PayPal account isn't verified.<br/>"
-                                           "We only accept payments from verified PayPal accounts."),
+                                           "We only accept payments from verified PayPal accounts.<br/>"
+                                           "Please complete the payment with your credit or debit card."),
                            extra_tags='safe')
             return False
 
