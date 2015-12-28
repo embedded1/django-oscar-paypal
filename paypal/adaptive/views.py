@@ -219,6 +219,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         is available for package's partner, if it exists, we follow it and divide the payment
         between UsendHome and the partner, otherwise, we take it all.
         """
+        partner_share = D('0.0')
         receivers = [
             {
                 'email': settings.PAYPAL_PRIMARY_RECEIVER_EMAIL,
@@ -242,6 +243,19 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 'is_primary': False,
                 'amount': partner_share
             })
+
+        #referral program discount can turn the table on us and we must adapt for
+        #cases where the secondary receiver share is bigger than the total order
+        #in such cases our share will be 0
+        if partner_share > self.basket.total_incl_tax:
+            try:
+                secondary_receiver = receivers[1]
+            except IndexError:
+                pass
+            else:
+                secondary_receiver['amount'] = self.basket.total_incl_tax
+                #update partner share
+                self.store_partner_share(self.basket.total_incl_tax)
 
         return receivers
 
