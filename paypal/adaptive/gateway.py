@@ -49,11 +49,21 @@ def payment_details(txn_id):
     params = [("transactionId", txn_id)]
     return _request(Payment_Details, params)
 
-def refund_payment(pay_key):
+def refund_payment(pay_key, receivers):
     """
     refund full amount
     """
     params = [("payKey", pay_key)]
+
+    if receivers:
+        params.append(('currencyCode', 'USD'))
+
+    for index, receiver in enumerate(receivers):
+        params.append(('receiverList.receiver(%d).amount' % index,
+                       str(receiver['amount'])))
+        params.append(('receiverList.receiver(%d).email' % index,
+                       receiver['email']))
+
     return _request(Refund, params)
 
 def set_payment_option(basket, pay_key, shipping_address=None):
@@ -207,6 +217,8 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
     """
     Make a request to PayPal
     """
+    error = False
+    msg = ''
     if headers is None:
         headers = {}
     if txn_fields is None:
@@ -262,9 +274,23 @@ def _request(action, params, api=Adaptive_Payments, headers=None, txn_fields=Non
 
     txn.save()
 
-    if not txn.is_successful or \
-        action == Pay and not txn.is_payment_successful:
+    if not txn.is_successful:
         msg = "Error %s - %s" % (txn.error_code, txn.error_message)
+        error = True
+
+    if action == Pay and not txn.is_payment_successful:
+        msg = "Error %s - %s" % (txn.error_code, txn.error_message)
+        error = True
+
+    if action == Refund:
+        primary_refund_status = pairs.get('refundInfoList.refundInfo(0).refundStatus', '')
+        secondary_refund_status = pairs.get('refundInfoList.refundInfo(1).refundStatus', '')
+        if not primary_refund_status  != 'REFUNDED' and \
+            not secondary_refund_status != 'REFUNDED':
+            msg = "Primary Error %s, Secondary Error %s" % (primary_refund_status, secondary_refund_status)
+            error = True
+
+    if error:
         logger.error(msg)
         raise exceptions.PayPalError(msg)
 

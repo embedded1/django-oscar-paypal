@@ -43,6 +43,7 @@ def get_pay_request_attrs(receivers, basket, action, host=None,
               return_url=return_url,
               cancel_url=cancel_url,
               sender_email=sender_email)
+              #ipn_url=ipn_url)
 
     #Return some Pay request important attributes
     return (
@@ -56,8 +57,8 @@ def fetch_transaction_details(txn_id):
     """
     return payment_details(txn_id)
 
-def refund_transaction(pay_key):
-    return refund_payment(pay_key)
+def refund_transaction(pay_key, receivers=None):
+    return refund_payment(pay_key, receivers or [])
 
 def set_transaction_details(pay_key, shipping_address, basket=None):
     return set_payment_option(
