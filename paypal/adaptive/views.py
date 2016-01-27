@@ -596,7 +596,7 @@ class SuccessResponseView(PaymentDetailsView):
     def get_partner_share(self):
         """
         We would like to save in db the amount we've payed our partner
-        we keep that saved under the 'amount_debited' attribute
+        we keep that saved under the 'partner_share' attribute
         """
         return self.checkout_session.get_partner_share()
 
@@ -611,8 +611,8 @@ class SuccessResponseView(PaymentDetailsView):
         Payment event contains the Pay request transaction id for audit
         The payment source stores the following:
         1 - amount_allocated = Order total value
-        2 - amount_debited = Partner's share
-        3 - amount_refunded = USendHome's share
+        2 - partner_share = Partner's share
+        3 - self_share = USendHome's share
         """
         # Record payment source and event
         partner_share = self.get_partner_share()
@@ -621,8 +621,8 @@ class SuccessResponseView(PaymentDetailsView):
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
-                        amount_debited=partner_share,
-                        amount_refunded=total.incl_tax - partner_share,
+                        partner_share=partner_share,
+                        self_share=total.incl_tax - partner_share,
                         reference=self.pay_key,
                         label=payment_method)
         self.add_payment_source(source)
