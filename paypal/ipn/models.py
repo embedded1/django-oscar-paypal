@@ -3,6 +3,9 @@ from paypal import base
 from django.utils.translation import ugettext_lazy as _
 
 class PaymentMessage(base.IPNMessageModel):
+    pay_key = models.CharField(
+        max_length=64, null=True, blank=True,
+        db_index=True)
     payment_status = models.CharField(
         max_length=32, db_index=True)
     fraud_management_filters = models.CharField(
