@@ -174,6 +174,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             #check if shipping insurance is needed
             if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
                 insurance_charge_incl_revenue = selected_method.shipping_insurance_cost()
+                #check if partner pays for shipping insurance
+                if partner_order_payment_settings.is_paying_shipping_insurance:
+                    partner_share += selected_method.shipping_insurance_base_rate()
 
             shipping_charge_incl_revenue = selected_method.shipping_method_cost()
             #if partner pays for postage we need to transfer him the postage costs
