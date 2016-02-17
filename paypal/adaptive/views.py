@@ -106,6 +106,9 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         """
         self.checkout_session.store_pay_payment_method(payment_method)
 
+    def store_partner_payment_settings(self, settings):
+        self.checkout_session.store_partner_payment_settings(settings)
+
     def get_selected_shipping_method(self):
         key = self.package.upc
         #make special key for return to store checkout where we need to
@@ -151,6 +154,11 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
         services_discounts = self.get_services_discounts()
 
+        partner_payment_settings = {
+            'paid_shipping_costs': False,
+            'paid_shipping_insurance': False
+        }
+
         #selected shipping method is not available for prepaid return labels
         if not self.checkout_session.is_return_to_store_prepaid_enabled():
             selected_method = self.get_selected_shipping_method()
@@ -177,6 +185,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 #check if partner pays for shipping insurance
                 if partner_order_payment_settings.is_paying_shipping_insurance:
                     partner_share += selected_method.shipping_insurance_base_rate()
+                    partner_payment_settings['paid_shipping_insurance'] = True
 
             shipping_charge_incl_revenue = selected_method.shipping_method_cost()
             #if partner pays for postage we need to transfer him the postage costs
@@ -185,9 +194,11 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             if partner_order_payment_settings.postage_paid_by_partner(selected_method.carrier):
                 partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
                 partner_share += selected_method.partner_postage_cost() + partner_bank_fee
+                partner_payment_settings['paid_shipping_costs'] = True
             else:
                 partner_share += D('0.3')
 
+        self.store_partner_payment_settings(partner_payment_settings)
         #Calculate shipping margin, we decrease easypost charge and any shipping discounts
         shipping_revenue = shipping_margin - easypost_charge - shipping_discounts
         shipping_revenue = D('0.0') if shipping_revenue < D('0.0') else shipping_revenue
@@ -606,6 +617,9 @@ class SuccessResponseView(PaymentDetailsView):
     def get_payment_method(self):
         return self.checkout_session.get_pay_payment_method()
 
+    def get_partner_payment_settings(self):
+        return self.checkout_session.get_partner_payment_settings()
+
     def handle_payment(self, order_number, total, **kwargs):
         """
         Save order related data into DB
@@ -620,12 +634,15 @@ class SuccessResponseView(PaymentDetailsView):
         # Record payment source and event
         partner_share = self.get_partner_share()
         payment_method = self.get_payment_method()
+        partner_payment_settings = self.get_partner_payment_settings()
         source_type, is_created = SourceType.objects.get_or_create(name='PayPal')
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
                         partner_share=partner_share,
                         self_share=total.incl_tax - partner_share,
+                        partner_paid_shipping_costs=partner_payment_settings['paid_shipping_costs'],
+                        partner_paid_shipping_insurance=partner_payment_settings['paid_shipping_insurance'],
                         reference=self.pay_key,
                         label=payment_method)
         self.add_payment_source(source)
