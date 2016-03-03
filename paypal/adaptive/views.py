@@ -344,7 +344,6 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
     def validate_txn(self, sender_email, sender_first_name, sender_last_name,
                      return_to_merchant, sender_shipping_address):
-
         #make sure user has verified Paypal account and account data is valid
         if not self.validate_paypal_account(
                 sender_email, sender_first_name,
@@ -580,14 +579,23 @@ class SuccessResponseView(PaymentDetailsView):
             messages.error(self.request, error_msg)
             return HttpResponseRedirect(reverse('customer:pending-packages'))
 
-        submission = self.build_submission(basket=basket)
-        self.submit(**submission)
-        #we don't display the error message here but we redirect to
-        #pending packages page
-        if self.has_error:
-            logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
-                            " has already been carried")
+        #before we submit the order, we check that order wasn't already sbumitted
+        #we've seen some cases where this function gets called twice for the same basket
+        package = basket.get_package()
+        if not package:
+            logger.error("SuccessResponseView: no package in basket found")
+            messages.error(self.request, error_msg)
             return HttpResponseRedirect(reverse('customer:pending-packages'))
+
+        if not package.orders.filter(basket_id=basket.id).exists():
+            submission = self.build_submission(basket=basket)
+            self.submit(**submission)
+            #we don't display the error message here but we redirect to
+            #pending packages page
+            if self.has_error:
+                logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
+                                " has already been carried")
+                return HttpResponseRedirect(reverse('customer:pending-packages'))
         #Order placement process has successfully finished,
         #redirect to thank you page
         return HttpResponseRedirect(reverse('checkout:thank-you'))
