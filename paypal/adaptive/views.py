@@ -374,7 +374,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         except PayPalError:
             #we couldn't get account status, this is probably because the credentials
             #don't match the data on file at PayPal
-            logger.error("Cannot determine PayPal account status: %s %s" % (sender_first_name, sender_last_name))
+            #logger.error("Cannot determine PayPal account status: %s %s" % (sender_first_name, sender_last_name))
             # unverified payer - redirect to pending packages page with error message
             messages.error(self.request, _("A problem occurred communicating with PayPal.<br/>"
                                            "Please make sure your USendHome account name and email address<br/>"
@@ -394,7 +394,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
 
         if pp_account_status.lower() != 'verified':
-            logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
+            #logger.error("unverified payer found: %s %s" % (sender_first_name, sender_last_name))
             # unverified payer - redirect to pending packages page with error message
             messages.error(self.request, _("Your PayPal account isn't verified.<br/>"
                                            "We only accept payments from verified PayPal accounts.<br/>"
@@ -406,8 +406,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         #make sure the paypal email address is identical to the email address the customer
         #uses on site
         if sender_email.strip().lower() != pp_account_email.strip().lower():
-            logger.error("paypal email address %s does not match on site email address: %s"
-                         % (pp_account_email, sender_email))
+            #logger.error("paypal email address %s does not match on site email address: %s"
+            #             % (pp_account_email, sender_email))
             messages.error(self.request, _("Your PayPal email address doesn't match USendHome email address.<br/>"
                                            " Please edit your settings and try again."),
                            extra_tags='safe')
@@ -416,8 +416,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         #check that the paypal account name is same as the one on site
         if pp_account_first_name.strip().lower() != sender_first_name.strip().lower() or \
            pp_account_last_name.strip().lower() != sender_last_name.strip().lower():
-            logger.error("PayPal account name does not match USendHome account name: %s %s, paypal name: %s %s"
-                         % (sender_first_name, sender_last_name, pp_account_first_name, pp_account_last_name))
+            #logger.error("PayPal account name does not match USendHome account name: %s %s, paypal name: %s %s"
+            #             % (sender_first_name, sender_last_name, pp_account_first_name, pp_account_last_name))
             messages.error(self.request, _("Your PayPal account name doesn't match USendHome account name<br/>"
                                            "Please contact customer support."),
                            extra_tags='safe block')
