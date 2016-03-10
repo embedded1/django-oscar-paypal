@@ -17,6 +17,7 @@ from django.contrib import messages
 from django.utils import six
 from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext as _
+from oscar.apps.order.utils import OrderNumberGenerator
 import logging
 
 TWO_PLACES = D('0.01')
@@ -579,23 +580,18 @@ class SuccessResponseView(PaymentDetailsView):
             messages.error(self.request, error_msg)
             return HttpResponseRedirect(reverse('customer:pending-packages'))
 
-        #before we submit the order, we check that order wasn't already sbumitted
-        #we've seen some cases where this function gets called twice for the same basket
-        package = basket.get_package()
-        if not package:
-            logger.error("SuccessResponseView: no package in basket found")
-            messages.error(self.request, error_msg)
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-
-        if not package.orders.filter(basket_id=basket.id).exists():
-            submission = self.build_submission(basket=basket)
+        submission = self.build_submission(basket=basket)
+        try:
             self.submit(**submission)
-            #we don't display the error message here but we redirect to
-            #pending packages page
-            if self.has_error:
-                logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
-                                " has already been carried")
-                return HttpResponseRedirect(reverse('customer:pending-packages'))
+        except ValueError:
+            #Order already exists, continue with the regular flow
+            pass
+        #we don't display the error message here but we redirect to
+        #pending packages page
+        if self.has_error:
+            logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
+                            " has already been carried")
+            return HttpResponseRedirect(reverse('customer:pending-packages'))
         #Order placement process has successfully finished,
         #redirect to thank you page
         return HttpResponseRedirect(reverse('checkout:thank-you'))
