@@ -78,7 +78,7 @@ def set_payment_option(basket, pay_key, shipping_address=None):
         params.append(('senderOptions.shippingAddress.addresseeName', shipping_address.name))
         params.append(('senderOptions.shippingAddress.street1', shipping_address.line1))
         params.append(('senderOptions.shippingAddress.city', shipping_address.line4))
-        params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode))
+        params.append(('senderOptions.shippingAddress.zip', shipping_address.postcode or '12345'))
         params.append(('senderOptions.shippingAddress.country', shipping_address.country.iso_3166_1_a2))
         if shipping_address.line2:
             params.append(('senderOptions.shippingAddress.street2', shipping_address.line2))

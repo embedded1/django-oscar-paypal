@@ -17,7 +17,6 @@ from django.contrib import messages
 from django.utils import six
 from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext as _
-from oscar.apps.order.utils import OrderNumberGenerator
 import logging
 
 TWO_PLACES = D('0.01')
@@ -41,7 +40,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     to PayPal's adaptive payments to perform the transaction.
     """
     permanent = False
-    partner_share_excluded_offers = ['Referral Program']
+    shipping_offers = ['Referral Program']
+    shipping_vouchers = []
     # Setting to distinguish if the site has already collected a shipping
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
@@ -128,17 +128,33 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         code = self.checkout_session.shipping_method_code(self.basket)
         return repo.get_shipping_method_by_code(code)
 
-    def get_services_discounts(self):
+    def get_services_offers(self):
         """
-        Here we exclude the referral program discount as it shouldn't affect
-        partner's share, this only apply to us
+        Here we exclude the referral program discount as it applied to shipping
+        and not to the services
         """
         offer_discounts = self.basket.offer_discounts
-        services_discounts = D('0.00')
+        services_offers = D('0.00')
         for offer_discount in offer_discounts:
-            if offer_discount['name'] not in self.partner_share_excluded_offers:
-                services_discounts += offer_discount['discount']
-        return services_discounts
+            if offer_discount['name'] not in self.shipping_offers:
+                services_offers += offer_discount['discount']
+        return services_offers
+
+    def get_shipping_offers(self):
+        """
+        This function returns the sum of all shipping offers
+        currently we have only 1 such offer: referral program
+        """
+        offer_discounts = self.basket.offer_discounts
+        shipping_offers = D('0.00')
+        for offer_discount in offer_discounts:
+            if offer_discount['name'] in self.shipping_offers:
+                shipping_offers += offer_discount['discount']
+        return shipping_offers
+
+    def get_shipping_vouchers(self):
+        return sum(voucher['discount'] if voucher['name'] in self.shipping_vouchers else D('0.0')
+                    for voucher in self.basket.voucher_discounts) or D('0.0')
 
     def calc_partner_share(self, partner_order_payment_settings):
         """
@@ -153,7 +169,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
         partner_share = shipping_discounts = shipping_charge_incl_revenue = bank_fee = D('0.0')
         order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
-        services_discounts = self.get_services_discounts()
+        services_discounts = self.get_services_offers()
 
         partner_payment_settings = {
             'paid_shipping_costs': False,
@@ -170,7 +186,8 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 raise PayPalError()
 
             easypost_charge = D('0.05')
-            shipping_discounts = sum(voucher['discount'] for voucher in self.basket.voucher_discounts) or D('0.0')
+            if partner_order_payment_settings.are_shipping_offers_apply:
+                shipping_discounts = self.get_shipping_vouchers() + self.get_shipping_offers()
             shipping_margin = selected_method.shipping_revenue
 
             bank_fee_line = self.basket.get_item_at_position(settings.BANK_FEE_POSITION)
