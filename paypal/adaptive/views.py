@@ -41,7 +41,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     """
     permanent = False
     shipping_offers = ['Referral Program']
-    shipping_vouchers = []
+    shipping_vouchers = ['ProductHunt Discount']
     # Setting to distinguish if the site has already collected a shipping
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
