@@ -39,9 +39,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     Initiate the transaction with Paypal and redirect the user
     to PayPal's adaptive payments to perform the transaction.
     """
-    permanent = False
-    shipping_offers = ['Referral Program']
-    shipping_vouchers = ['ProductHunt Discount']
+    permanent = False        
     # Setting to distinguish if the site has already collected a shipping
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
@@ -128,33 +126,31 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         code = self.checkout_session.shipping_method_code(self.basket)
         return repo.get_shipping_method_by_code(code)
 
-    def get_services_offers(self):
-        """
-        Here we exclude the referral program discount as it applied to shipping
-        and not to the services
-        """
-        offer_discounts = self.basket.offer_discounts
-        services_offers = D('0.00')
-        for offer_discount in offer_discounts:
-            if offer_discount['name'] not in self.shipping_offers:
-                services_offers += offer_discount['discount']
-        return services_offers
+    def get_shipping_discounts(self):
+        return self.get_shipping_vouchers() + self.get_shipping_offers()
 
     def get_shipping_offers(self):
         """
         This function returns the sum of all shipping offers
         currently we have only 1 such offer: referral program
         """
-        offer_discounts = self.basket.offer_discounts
-        shipping_offers = D('0.00')
-        for offer_discount in offer_discounts:
-            if offer_discount['name'] in self.shipping_offers:
-                shipping_offers += offer_discount['discount']
-        return shipping_offers
+        shipping_offers = self.basket.offer_discounts
+        discount = D('0.00')
+        for offer in shipping_offers:
+            range_name = offer['offer'].benefit.range.name
+            if range_name == 'shipping_method':
+                discount += offer['discount']
+        return discount
 
     def get_shipping_vouchers(self):
-        return sum(voucher['discount'] if voucher['name'] in self.shipping_vouchers else D('0.0')
-                    for voucher in self.basket.voucher_discounts) or D('0.0')
+
+        shipping_vouchers = self.basket.voucher_discounts
+        discount = D('0.00')
+        for voucher in shipping_vouchers:
+            range_name = voucher['voucher'].benefit.range.name
+            if range_name == 'shipping_method':
+                discount += voucher['discount']
+        return discount
 
     def calc_partner_share(self, partner_order_payment_settings):
         """
@@ -167,9 +163,13 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             him amount equals to bank_fee - 0.3
         """
         easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
-        partner_share = shipping_discounts = shipping_charge_incl_revenue = bank_fee = D('0.0')
+        partner_share = shipping_charge_incl_revenue = bank_fee = D('0.0')
         order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
-        services_discounts = self.get_services_offers()
+
+        #get all shipping discounts
+        shipping_discounts = self.get_shipping_discounts()
+        #service discounts is all_discounts - shipping_discounts
+        services_discounts = self.basket.total_discount - shipping_discounts
 
         partner_payment_settings = {
             'paid_shipping_costs': False,
@@ -186,8 +186,6 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 raise PayPalError()
 
             easypost_charge = D('0.05')
-            if partner_order_payment_settings.are_shipping_offers_apply:
-                shipping_discounts = self.get_shipping_vouchers() + self.get_shipping_offers()
             shipping_margin = selected_method.shipping_revenue
 
             bank_fee_line = self.basket.get_item_at_position(settings.BANK_FEE_POSITION)
@@ -215,6 +213,10 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
                 partner_payment_settings['paid_shipping_costs'] = True
             else:
                 partner_share += D('0.3')
+
+        #zero out the shipping discounts if they don't apply to partner
+        if not partner_order_payment_settings.are_shipping_offers_apply:
+            shipping_discounts = D('0.0')
 
         self.store_partner_payment_settings(partner_payment_settings)
         #Calculate shipping margin, we decrease easypost charge and any shipping discounts
