@@ -39,7 +39,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     Initiate the transaction with Paypal and redirect the user
     to PayPal's adaptive payments to perform the transaction.
     """
-    permanent = False        
+    permanent = False
     # Setting to distinguish if the site has already collected a shipping
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
@@ -551,9 +551,6 @@ class SuccessResponseView(PaymentDetailsView):
         if self.pay_key is None:
             # Manipulation - redirect to basket page with warning message
             logger.error("SuccessResponseView: Missing pay_key in session")
-            messages.error(
-                self.request,
-                _("Unable to determine PayPal transaction details."))
 
     def load_frozen_basket(self, basket_id):
         # Lookup the frozen basket that this txn corresponds to
@@ -584,9 +581,6 @@ class SuccessResponseView(PaymentDetailsView):
         We fetch the txn details again and then proceed with oscar's standard
         payment details view for placing the order.
         """
-        self.get_pay_key()
-        if self.pay_key is None:
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
         error_msg = _(
             "A problem occurred communicating with PayPal "
             "- please try again later"
@@ -659,6 +653,7 @@ class SuccessResponseView(PaymentDetailsView):
         payment_method = self.get_payment_method()
         partner_payment_settings = self.get_partner_payment_settings()
         source_type, is_created = SourceType.objects.get_or_create(name='PayPal')
+        self.get_pay_key()
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
@@ -666,7 +661,7 @@ class SuccessResponseView(PaymentDetailsView):
                         self_share=total.incl_tax - partner_share,
                         partner_paid_shipping_costs=partner_payment_settings['paid_shipping_costs'],
                         partner_paid_shipping_insurance=partner_payment_settings['paid_shipping_insurance'],
-                        reference=self.pay_key,
+                        reference=self.pay_key or '',
                         label=payment_method)
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
