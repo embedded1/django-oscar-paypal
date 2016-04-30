@@ -548,9 +548,6 @@ class SuccessResponseView(PaymentDetailsView):
 
     def get_pay_key(self):
         self.pay_key = self.checkout_session.get_pay_key()
-        if self.pay_key is None:
-            # Manipulation - redirect to basket page with warning message
-            logger.error("SuccessResponseView: Missing pay_key in session")
 
     def load_frozen_basket(self, basket_id):
         # Lookup the frozen basket that this txn corresponds to
@@ -585,6 +582,13 @@ class SuccessResponseView(PaymentDetailsView):
             "A problem occurred communicating with PayPal "
             "- please try again later"
         )
+
+        self.get_pay_key()
+        if self.pay_key is None:
+            #Some PayPal transactions redirect more than once to this page
+            #in the second time the pay_key will not be in session so we can continue
+            #with the flow
+            return HttpResponseRedirect(reverse('checkout:thank-you'))
 
         # Reload frozen basket which is specified in the URL
         basket = self.load_frozen_basket(kwargs['basket_id'])
@@ -653,7 +657,6 @@ class SuccessResponseView(PaymentDetailsView):
         payment_method = self.get_payment_method()
         partner_payment_settings = self.get_partner_payment_settings()
         source_type, is_created = SourceType.objects.get_or_create(name='PayPal')
-        self.get_pay_key()
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
@@ -661,7 +664,7 @@ class SuccessResponseView(PaymentDetailsView):
                         self_share=total.incl_tax - partner_share,
                         partner_paid_shipping_costs=partner_payment_settings['paid_shipping_costs'],
                         partner_paid_shipping_insurance=partner_payment_settings['paid_shipping_insurance'],
-                        reference=self.pay_key or '',
+                        reference=self.pay_key,
                         label=payment_method)
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
@@ -700,7 +703,7 @@ class SuccessResponseView(PaymentDetailsView):
         """
         if shipping_method.code == 'no-shipping-required' \
             and not self.checkout_session.is_return_to_store_prepaid_enabled():
-            logger.critical("Placing an order, no shipping method was found, fallback to no shipping required,"
+            logger.critical("Placing an order, no shipping method was found, user have been idle for too long,"
                             " user #%s" % user.id)
             messages.error(self.request, _("It seems that you've been idle for too long, please re-place your order."))
             return HttpResponseRedirect(reverse('customer:pending-packages'))
