@@ -333,7 +333,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
 
         params = {
             'basket': self.basket,
-            'sender_email': self.request.user.email
+            #'sender_email': self.request.user.email
         }
 
         if settings.DEBUG:
@@ -365,10 +365,10 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     def validate_txn(self, sender_email, sender_first_name, sender_last_name,
                      return_to_merchant, sender_shipping_address):
         #make sure user has verified Paypal account and account data is valid
-        if not self.validate_paypal_account(
-                sender_email, sender_first_name,
-                sender_last_name):
-            return False
+        #if not self.validate_paypal_account(
+        #        sender_email, sender_first_name,
+        #        sender_last_name):
+        #    return False
 
         #check shipping address only for non merchant addresses
         #this check is not needed for US addresses where the package is returned to store
@@ -518,7 +518,7 @@ class GuestRedirectView(RedirectView):
             raise MissingShippingMethodException()
 
         params = {
-            'basket': self.basket
+            'basket': self.basket,
         }
 
         if settings.DEBUG:
@@ -724,4 +724,4 @@ class CancelResponseView(generic.RedirectView):
 
     def get_redirect_url(self, **kwargs):
         messages.error(self.request, _("PayPal transaction cancelled"))
-        return reverse('customer:pending-packages')
+        return reverse('checkout:payment-method')
