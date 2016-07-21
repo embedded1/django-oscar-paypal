@@ -198,7 +198,7 @@ def get_account_info(first_name, last_name, email):
     Fetch payer status and personal details
     """
     params = [
-        ("emailAddress", email),
+        #("emailAddress", email),
         ("firstName", first_name),
         ("lastName", last_name),
         ("matchCriteria", "NAME")
