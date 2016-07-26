@@ -8,7 +8,8 @@ from django.conf import settings
 from paypal.exceptions import PayPalError
 from paypal.adaptive.exceptions import (
     EmptyBasketException, MissingShippingAddressException,
-    MissingShippingMethodException, InvalidBasket, PayPalFailedValidationException)
+    MissingShippingMethodException, InvalidBasket,
+    PayPalFailedValidationException, GeneralException)
 from paypal.adaptive.facade import (
     get_pay_request_attrs, fetch_account_info,
     set_transaction_details)
@@ -17,6 +18,7 @@ from django.contrib import messages
 from django.utils import six
 from django.core.urlresolvers import reverse
 from django.utils.translation import ugettext as _
+from paypal.adaptive.mixins import PaymentSourceMixin
 import logging
 
 TWO_PLACES = D('0.01')
@@ -26,7 +28,6 @@ PaymentDetailsView = get_class('checkout.views', 'PaymentDetailsView')
 CheckoutSessionMixin = get_class('checkout.session', 'CheckoutSessionMixin')
 Repository = get_class('shipping.repository', 'Repository')
 Applicator = get_class('offer.utils', 'Applicator')
-Selector = get_class('partner.strategy', 'Selector')
 Source = get_model('payment', 'Source')
 Order = get_model('order', 'Order')
 SourceType = get_model('payment', 'SourceType')
@@ -34,7 +35,7 @@ Basket = get_model('basket', 'Basket')
 logger = logging.getLogger('paypal.adaptive')
 
 
-class RedirectView(CheckoutSessionMixin, generic.RedirectView):
+class RedirectView(PaymentSourceMixin, generic.RedirectView):
     """
     Initiate the transaction with Paypal and redirect the user
     to PayPal's adaptive payments to perform the transaction.
@@ -44,17 +45,6 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
     as_payment_method = False
-
-    def dispatch(self, request, *args, **kwargs):
-        self.basket = request.basket
-        self.package = request.basket.get_package()
-        if self.package is None:
-            logger.error("Paypal Adaptive Payments: couldn't get package"
-                         " from basket for partner share calculations")
-            messages.error(
-                request, _("An error occurred communicating with PayPal"))
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-        return super(RedirectView, self).dispatch(request, *args, **kwargs)
 
     def get_redirect_url(self, **kwargs):
         try:
@@ -83,6 +73,10 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             return reverse('checkout:shipping-method')
         except PayPalFailedValidationException:
             return reverse('customer:pending-packages')
+        except GeneralException:
+            messages.error(
+                self.request, _("Something went terribly wrong, please try again later"))
+            return reverse('customer:pending-packages')
         else:
             # Transaction successfully registered with PayPal.  Now freeze the
             # basket so it can't be edited while the customer is on the PayPal
@@ -98,149 +92,6 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         We save Pay request pay_key to identify the Pay transaction
         """
         self.checkout_session.store_pay_key(pay_key)
-
-    def store_pay_payment_method(self, payment_method):
-        """
-        Determine if the payment was done with Paypal account or with credit card
-        """
-        self.checkout_session.store_pay_payment_method(payment_method)
-
-    def store_partner_payment_settings(self, settings):
-        self.checkout_session.store_partner_payment_settings(settings)
-
-    def get_selected_shipping_method(self):
-        key = self.package.upc
-        #make special key for return to store checkout where we need to
-        #show only domestic methods
-        if self.checkout_session.is_return_to_store_enabled():
-            key += "_return-to-store"
-        repo = self.checkout_session.get_shipping_repository(key)
-
-        #we should never get here - but if we do show error message and redirect to
-        #pending packages page
-        if not repo:
-            logger.error("Paypal Adaptive Payments: We could not fetch shipping repository from cache")
-            raise PayPalError()
-
-        #return the selected shipping method
-        code = self.checkout_session.shipping_method_code(self.basket)
-        return repo.get_shipping_method_by_code(code)
-
-    def get_shipping_discounts(self):
-        return self.get_shipping_vouchers() + self.get_shipping_offers()
-
-    def get_shipping_offers(self):
-        """
-        This function returns the sum of all shipping offers
-        currently we have only 1 such offer: referral program
-        """
-        shipping_offers = self.basket.offer_discounts
-        discount = D('0.00')
-        for offer in shipping_offers:
-            range_name = offer['offer'].benefit.range.name
-            if range_name == 'shipping_method':
-                discount += offer['discount']
-        return discount
-
-    def get_shipping_vouchers(self):
-
-        shipping_vouchers = self.basket.voucher_discounts
-        discount = D('0.00')
-        for voucher in shipping_vouchers:
-            range_name = voucher['voucher'].benefit.range.name
-            if range_name == 'shipping_method':
-                discount += voucher['discount']
-        return discount
-
-    def calc_partner_share(self, partner_order_payment_settings):
-        """
-        Partner's share is calculated as follows:
-        1 - Payment for the shipping is made through partner's account so we need to pay him back
-            (based on settings attribute)
-        2 - % of total revenue
-        3 - We refer to shipping discounts as vouchers and to services discounts as offers
-        4 - We pay $0.3 for partner in case he doesn't pay for the postage, otherwise we pay
-            him amount equals to bank_fee - 0.3
-        """
-        easypost_charge = shipping_margin = insurance_charge_incl_revenue = \
-        partner_share = shipping_charge_incl_revenue = bank_fee = D('0.0')
-        order_total_no_discounts =  self.basket.total_excl_tax_excl_discounts
-
-        #get all shipping discounts
-        shipping_discounts = self.get_shipping_discounts()
-        #service discounts is all_discounts - shipping_discounts
-        services_discounts = self.basket.total_discount - shipping_discounts
-
-        partner_payment_settings = {
-            'paid_shipping_costs': False,
-            'paid_shipping_insurance': False
-        }
-
-        #selected shipping method is not available for prepaid return labels
-        if not self.checkout_session.is_return_to_store_prepaid_enabled():
-            selected_method = self.get_selected_shipping_method()
-            #we couldn't find selected shipping method in cache, need to cancel
-            #the transaction and show error message
-            if selected_method is None:
-                logger.error("Paypal Adaptive Payments: couldn't get selected shipping method from cache")
-                raise PayPalError()
-
-            easypost_charge = D('0.05')
-            shipping_margin = selected_method.shipping_revenue
-
-            bank_fee_line = self.basket.get_item_at_position(settings.BANK_FEE_POSITION)
-            if bank_fee_line is None:
-                logger.error("Paypal adaptive payments: couldn't get back fee line from basket")
-                raise PayPalError()
-
-            bank_fee = bank_fee_line.price_incl_tax
-
-            #check if shipping insurance is needed
-            if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
-                insurance_charge_incl_revenue = selected_method.shipping_insurance_cost()
-                #check if partner pays for shipping insurance
-                if partner_order_payment_settings.is_paying_shipping_insurance:
-                    partner_share += selected_method.shipping_insurance_base_rate()
-                    partner_payment_settings['paid_shipping_insurance'] = True
-
-            shipping_charge_incl_revenue = selected_method.shipping_method_cost()
-            #if partner pays for postage we need to transfer him the postage costs
-            #and the bank fee we received for the postage, which is the bank_fee - 0.3
-            #otherwise, we only transfer him 0.3
-            if partner_order_payment_settings.postage_paid_by_partner(selected_method.carrier):
-                partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
-                partner_share += selected_method.partner_postage_cost() + partner_bank_fee
-                partner_payment_settings['paid_shipping_costs'] = True
-            else:
-                partner_share += D('0.3')
-
-        #zero out the shipping discounts if they don't apply to partner
-        if not partner_order_payment_settings.are_shipping_offers_apply:
-            shipping_discounts = D('0.0')
-
-        self.store_partner_payment_settings(partner_payment_settings)
-        #Calculate shipping margin, we decrease easypost charge and any shipping discounts
-        shipping_revenue = shipping_margin - easypost_charge - shipping_discounts
-        shipping_revenue = D('0.0') if shipping_revenue < D('0.0') else shipping_revenue
-        #Partner doesn't get any revenue from shipping insurance
-        no_revenues = insurance_charge_incl_revenue
-        #Services revenue is what left in basket after we decrease the shipping part,
-        #the lines that the partner doesn't get any revenue from, the bank fee that we already
-        #calculated partner's share above and finally the services discounts
-        services_revenue = order_total_no_discounts - shipping_charge_incl_revenue - \
-                           no_revenues - services_discounts - bank_fee
-        services_revenue = D('0.0') if services_revenue < D('0.0') else services_revenue
-        #Calculate partner's share that consists of 2 parts: shipping revenue and services revenue
-        partner_share += ( (shipping_revenue * partner_order_payment_settings.shipping_margin) +
-                           (services_revenue * partner_order_payment_settings.services_margin) ) / D('100.0')
-        return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
-
-    def store_partner_share(self, share):
-        """
-        we save partner's share in session so we could audit it in db
-        once payment completes
-        """
-        self.checkout_session.store_partner_share(share)
 
 
     def get_receivers(self):
@@ -312,24 +163,24 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         if self.basket.is_empty:
             raise EmptyBasketException()
 
-        user = self.request.user
-        customer_shipping_address = self.get_shipping_address(self.basket)
-        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
+        #user = self.request.user
+        #customer_shipping_address = self.get_shipping_address(self.basket)
+        #is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
 
         #check that shipping address exists
-        if not customer_shipping_address and not is_return_to_merchant:
-            # we could not get shipping address - redirect to basket page with warning message
-            logger.warning("customer's shipping address not found while verifying PayPal account")
-            self.unfreeze_basket(kwargs['basket_id'])
-            raise MissingShippingMethodException()
+        #if not customer_shipping_address and not is_return_to_merchant:
+        #    # we could not get shipping address - redirect to basket page with warning message
+        #    logger.warning("customer's shipping address not found while verifying PayPal account")
+        #    self.unfreeze_basket(kwargs['basket_id'])
+        #    raise MissingShippingMethodException()
 
         #Run some validations on the user
-        if not self.validate_txn(sender_email=user.email,
-                                 sender_first_name=user.first_name,
-                                 sender_last_name=user.last_name,
-                                 sender_shipping_address=customer_shipping_address,
-                                 return_to_merchant=is_return_to_merchant):
-            raise PayPalFailedValidationException()
+        #if not self.validate_txn(sender_email=user.email,
+        #                         sender_first_name=user.first_name,
+        #                         sender_last_name=user.last_name,
+        #                         sender_shipping_address=customer_shipping_address,
+        #                         return_to_merchant=is_return_to_merchant):
+        #    raise PayPalFailedValidationException()
 
         params = {
             'basket': self.basket,
@@ -352,7 +203,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
             pay_key=pay_key,
-            shipping_address=customer_shipping_address)
+            shipping_address=self.get_shipping_address(self.basket))
         return redirect_url
 
 
@@ -397,7 +248,7 @@ class RedirectView(CheckoutSessionMixin, generic.RedirectView):
             #logger.error("Cannot determine PayPal account status: %s %s" % (sender_first_name, sender_last_name))
             # unverified payer - redirect to pending packages page with error message
             messages.error(self.request, _("A problem occurred communicating with PayPal.<br/>"
-                                           "Please make sure your USendHome account name and email address<br/>"
+                                           "Please make sure your USendHome account name and email address"
                                            " are completely identical to the data on your PayPal account."),
                            extra_tags='safe')
             return False
@@ -507,15 +358,14 @@ class GuestRedirectView(RedirectView):
         if self.basket.is_empty:
             raise EmptyBasketException()
 
-        customer_shipping_address = self.get_shipping_address(self.basket)
-        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
+        #is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
 
         #check that shipping address exists
-        if not customer_shipping_address and not is_return_to_merchant:
-            # we could not get shipping address - redirect to basket page with warning message
-            logger.warning("customer's shipping address not found while verifying PayPal account")
-            self.unfreeze_basket(kwargs['basket_id'])
-            raise MissingShippingMethodException()
+        #if not customer_shipping_address and not is_return_to_merchant:
+        #    # we could not get shipping address - redirect to basket page with warning message
+        #    logger.warning("customer's shipping address not found while verifying PayPal account")
+        #    self.unfreeze_basket(kwargs['basket_id'])
+        #    raise MissingShippingMethodException()
 
         params = {
             'basket': self.basket,
@@ -537,33 +387,15 @@ class GuestRedirectView(RedirectView):
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
             pay_key=pay_key,
-            shipping_address=customer_shipping_address)
+            shipping_address=self.get_shipping_address(self.basket))
         return redirect_url
 
-class SuccessResponseView(PaymentDetailsView):
+class SuccessResponseView(PaymentSourceMixin, PaymentDetailsView):
     has_error = False
     preview = True
-    err_msg = _("A problem occurred communicating with PayPal "
-                "- please try again later")
 
     def get_pay_key(self):
         self.pay_key = self.checkout_session.get_pay_key()
-
-    def load_frozen_basket(self, basket_id):
-        # Lookup the frozen basket that this txn corresponds to
-        try:
-            basket = Basket.objects.get(id=basket_id, status=Basket.FROZEN)
-        except Basket.DoesNotExist:
-            return None
-
-        # Assign strategy to basket instance
-        if Selector:
-            basket.strategy = Selector().strategy(self.request)
-
-        # Re-apply any offers
-        Applicator().apply(self.request, basket)
-
-        return basket
 
     def post(self, request, *args, **kwargs):
         """
@@ -613,33 +445,9 @@ class SuccessResponseView(PaymentDetailsView):
         #redirect to thank you page
         return HttpResponseRedirect(reverse('checkout:thank-you'))
 
-    # Warning: This method can be removed when we drop support for Oscar 0.6
-    def get_error_response(self):
-        # We bypass the normal session checks for shipping address and shipping
-        # method as they don't apply here.
-        pass
-
-    def get_context_data(self, **kwargs):
-        ctx = super(SuccessResponseView, self).get_context_data(**kwargs)
-        if 'error' in ctx:
-            messages.error(self.request, ctx['error'])
-            #Mark that order placement process has encountered an error
-            #need to redirect to pending packages page with the error
-            self.has_error = True
-        return ctx
-
-    def get_partner_share(self):
-        """
-        We would like to save in db the amount we've payed our partner
-        we keep that saved under the 'partner_share' attribute
-        """
-        return self.checkout_session.get_partner_share()
 
     def get_payment_method(self):
         return self.checkout_session.get_pay_payment_method()
-
-    def get_partner_payment_settings(self):
-        return self.checkout_session.get_partner_payment_settings()
 
     def handle_payment(self, order_number, total, **kwargs):
         """
@@ -672,44 +480,6 @@ class SuccessResponseView(PaymentDetailsView):
         self.checkout_session.delete_partner_share()
         #delete the paypal_ap attributes from session
         self.checkout_session.delete_paypal_ap()
-
-
-    def unfreeze_basket(self, basket_id):
-        basket = self.load_frozen_basket(basket_id)
-        basket.thaw()
-
-
-    def get_shipping_method(self, basket, shipping_address=None, **kwargs):
-        """
-        Return the shipping method used in session
-        """
-        shipping_method = super(SuccessResponseView, self).get_shipping_method(basket)
-        return shipping_method
-
-    def get_shipping_address(self, basket):
-        """
-        Return the shipping address as entered on our site
-        """
-        shipping_addr = super(SuccessResponseView, self).get_shipping_address(basket)
-        return shipping_addr
-
-    def submit(self, user, basket, shipping_address, shipping_method,
-               order_total, payment_kwargs=None, order_kwargs=None):
-        """
-        Since we fallback to no shipping required, we must enforce that the only case its allowed
-        is when customer returns items back to merchant and he provided us with a return label
-        in all other cases, we must redirect to pending packages page, display a message to the customer
-        and log this incident
-        """
-        if shipping_method.code == 'no-shipping-required' \
-            and not self.checkout_session.is_return_to_store_prepaid_enabled():
-            logger.critical("Placing an order, no shipping method was found, user have been idle for too long,"
-                            " user #%s" % user.id)
-            messages.error(self.request, _("It seems that you've been idle for too long, please re-place your order."))
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-
-        return super(SuccessResponseView, self).submit(user, basket, shipping_address, shipping_method,
-                                                      order_total, payment_kwargs, order_kwargs)
 
 
 class CancelResponseView(generic.RedirectView):

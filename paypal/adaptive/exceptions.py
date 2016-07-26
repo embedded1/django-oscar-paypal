@@ -9,6 +9,8 @@ class MissingShippingAddressException(Exception):
 class MissingShippingMethodException(Exception):
     pass
 
+class GeneralException(Exception):
+    pass
 
 class InvalidBasket(Exception):
     """
