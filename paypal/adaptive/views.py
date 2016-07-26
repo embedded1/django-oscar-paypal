@@ -164,15 +164,15 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
             raise EmptyBasketException()
 
         #user = self.request.user
-        customer_shipping_address = self.get_shipping_address(self.basket)
-        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
+        #customer_shipping_address = self.get_shipping_address(self.basket)
+        #is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
 
         #check that shipping address exists
-        if not customer_shipping_address and not is_return_to_merchant:
-            # we could not get shipping address - redirect to basket page with warning message
-            logger.warning("customer's shipping address not found while verifying PayPal account")
-            self.unfreeze_basket(kwargs['basket_id'])
-            raise MissingShippingMethodException()
+        #if not customer_shipping_address and not is_return_to_merchant:
+        #    # we could not get shipping address - redirect to basket page with warning message
+        #    logger.warning("customer's shipping address not found while verifying PayPal account")
+        #    self.unfreeze_basket(kwargs['basket_id'])
+        #    raise MissingShippingMethodException()
 
         #Run some validations on the user
         #if not self.validate_txn(sender_email=user.email,
@@ -203,7 +203,7 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
             pay_key=pay_key,
-            shipping_address=customer_shipping_address)
+            shipping_address=self.get_shipping_address(self.basket))
         return redirect_url
 
 
@@ -358,15 +358,14 @@ class GuestRedirectView(RedirectView):
         if self.basket.is_empty:
             raise EmptyBasketException()
 
-        customer_shipping_address = self.get_shipping_address(self.basket)
-        is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
+        #is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
 
         #check that shipping address exists
-        if not customer_shipping_address and not is_return_to_merchant:
-            # we could not get shipping address - redirect to basket page with warning message
-            logger.warning("customer's shipping address not found while verifying PayPal account")
-            self.unfreeze_basket(kwargs['basket_id'])
-            raise MissingShippingMethodException()
+        #if not customer_shipping_address and not is_return_to_merchant:
+        #    # we could not get shipping address - redirect to basket page with warning message
+        #    logger.warning("customer's shipping address not found while verifying PayPal account")
+        #    self.unfreeze_basket(kwargs['basket_id'])
+        #    raise MissingShippingMethodException()
 
         params = {
             'basket': self.basket
@@ -388,14 +387,12 @@ class GuestRedirectView(RedirectView):
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
             pay_key=pay_key,
-            shipping_address=customer_shipping_address)
+            shipping_address=self.get_shipping_address(self.basket))
         return redirect_url
 
 class SuccessResponseView(PaymentSourceMixin, PaymentDetailsView):
     has_error = False
     preview = True
-    err_msg = _("A problem occurred communicating with PayPal "
-                "- please try again later")
 
     def get_pay_key(self):
         self.pay_key = self.checkout_session.get_pay_key()
