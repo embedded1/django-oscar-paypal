@@ -1,5 +1,5 @@
 from oscar.core.loading import get_class
-from decimal import ROUND_FLOOR, Decimal as D
+from decimal import Decimal as D
 from django.http import HttpResponseRedirect, HttpResponseNotAllowed
 from django.db.models import get_model
 from django.views import generic
@@ -445,7 +445,6 @@ class SuccessResponseView(PaymentSourceMixin, PaymentDetailsView):
         #redirect to thank you page
         return HttpResponseRedirect(reverse('checkout:thank-you'))
 
-
     def get_payment_method(self):
         return self.checkout_session.get_pay_payment_method()
 
@@ -468,6 +467,7 @@ class SuccessResponseView(PaymentSourceMixin, PaymentDetailsView):
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
+                        amount_debited=total.incl_tax,
                         partner_share=partner_share,
                         self_share=total.incl_tax - partner_share,
                         partner_paid_shipping_costs=partner_payment_settings['paid_shipping_costs'],
