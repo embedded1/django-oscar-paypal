@@ -199,7 +199,7 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
 
         redirect_url, pay_key = get_pay_request_attrs(**params)
         self.store_pay_key(pay_key)
-        self.store_pay_payment_method('PayPal Account')
+        self.store_pay_payment_method('PayPal')
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
             pay_key=pay_key,

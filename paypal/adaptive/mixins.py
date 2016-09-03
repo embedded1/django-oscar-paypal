@@ -20,7 +20,8 @@ class PaymentSourceMixin(CheckoutSessionMixin):
             self.package = self.basket.get_package()
             if self.package is None:
                 logger.error("couldn't get package"
-                             " from basket for partner share calculations")
+                             " from basket for partner share calculations,"
+                             " basket id = %s" % self.basket.id)
                 messages.error(
                     request, _("Something went terribly wrong, please try again later"))
                 return HttpResponseRedirect(reverse('customer:pending-packages'))
