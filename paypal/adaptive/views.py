@@ -35,7 +35,9 @@ Basket = get_model('basket', 'Basket')
 logger = logging.getLogger('paypal.adaptive')
 
 
-class RedirectView(PaymentSourceMixin, generic.RedirectView):
+class RedirectView(PaymentSourceMixin,
+                   generic.RedirectView,
+                   PaymentDetailsView):
     """
     Initiate the transaction with Paypal and redirect the user
     to PayPal's adaptive payments to perform the transaction.
@@ -45,10 +47,11 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
     # address.  This is False when redirecting to PayPal straight from the
     # basket page but True when redirecting from checkout.
     as_payment_method = False
+    preview = False
 
     def get_redirect_url(self, **kwargs):
         try:
-            url = self._get_redirect_url(**kwargs)
+            url, pay_key = self._get_redirect_url(**kwargs)
         except PayPalError:
             messages.error(
                 self.request, _("An error occurred communicating with PayPal"))
@@ -80,18 +83,13 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
         else:
             # Transaction successfully registered with PayPal.  Now freeze the
             # basket so it can't be edited while the customer is on the PayPal
-            # site.
-            self.basket.freeze()
-
+            # site
+            submission = self.build_submission()
+            #add token
+            submission['payment_kwargs'] = {'pay_key': pay_key}
+            self.submit(**submission)
             logger.info("Basket #%s - redirecting to %s", self.basket.id, url)
-
             return url
-
-    def store_pay_key(self, pay_key):
-        """
-        We save Pay request pay_key to identify the Pay transaction
-        """
-        self.checkout_session.store_pay_key(pay_key)
 
 
     def get_receivers(self):
@@ -104,7 +102,6 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
         is available for package's partner, if it exists, we follow it and divide the payment
         between UsendHome and the partner, otherwise, we take it all.
         """
-        partner_share = D('0.0')
         receivers = [
             {
                 'email': settings.PAYPAL_PRIMARY_RECEIVER_EMAIL,
@@ -113,34 +110,13 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
             }
         ]
 
-        #Find out if we need to transfer funds to partner
-        partner = self.package.stockrecords.all().prefetch_related(
-            'partner', 'partner__payments_settings')[0].partner
-        partner_order_payment_settings = partner.active_payment_settings
-
-        if partner_order_payment_settings:
-            partner_share = self.calc_partner_share(partner_order_payment_settings)
-            #store partner's share in sessions as we
-            #would like to store it in DB for audit
-            self.store_partner_share(partner_share)
+        partner_share, partner_payment_settings = self.get_partner_payment_info(self.basket)
+        if partner_share > 0:
             receivers.append({
-                'email': partner_order_payment_settings.billing_email,
+                'email': partner_payment_settings.billing_email,
                 'is_primary': False,
                 'amount': partner_share
             })
-
-        #referral program discount can turn the table on us and we must adapt for
-        #cases where the secondary receiver share is bigger than the total order
-        #in such cases our share will be 0
-        if partner_share > self.basket.total_incl_tax:
-            try:
-                secondary_receiver = receivers[1]
-            except IndexError:
-                pass
-            else:
-                secondary_receiver['amount'] = self.basket.total_incl_tax
-                #update partner share
-                self.store_partner_share(self.basket.total_incl_tax)
 
         return receivers
 
@@ -198,13 +174,13 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
         self.align_receivers(params)
 
         redirect_url, pay_key = get_pay_request_attrs(**params)
-        self.store_pay_key(pay_key)
-        self.store_pay_payment_method('PayPal')
+
         #add shipping address to the transaction before we redirect to PayPal
         self.add_shipping_address_to_tran(
             pay_key=pay_key,
             shipping_address=self.get_shipping_address(self.basket))
-        return redirect_url
+
+        return redirect_url, pay_key
 
 
     def _get_paypal_params(self):
@@ -347,107 +323,6 @@ class RedirectView(PaymentSourceMixin, generic.RedirectView):
 
         return True
 
-class GuestRedirectView(RedirectView):
-    def _get_redirect_url(self, **kwargs):
-        """
-        Guest payment allows customer with no PayPal account to
-        transfer the payment using a credit card instead of using their
-        PayPal account balance. We don't run the standard PayPal validations
-        as there's no such account.
-        """
-        if self.basket.is_empty:
-            raise EmptyBasketException()
-
-        #is_return_to_merchant = self.checkout_session.is_return_to_store_enabled()
-
-        #check that shipping address exists
-        #if not customer_shipping_address and not is_return_to_merchant:
-        #    # we could not get shipping address - redirect to basket page with warning message
-        #    logger.warning("customer's shipping address not found while verifying PayPal account")
-        #    self.unfreeze_basket(kwargs['basket_id'])
-        #    raise MissingShippingMethodException()
-
-        params = {
-            'basket': self.basket,
-        }
-
-        if settings.DEBUG:
-            # Determine the localserver's hostname to use when
-            # in testing mode
-            params['host'] = self.request.META['HTTP_HOST']
-
-        params['paypal_params'] = self._get_paypal_params()
-
-        params['receivers'] = self.get_receivers()
-        self.align_receivers(params)
-
-        redirect_url, pay_key = get_pay_request_attrs(**params)
-        self.store_pay_key(pay_key)
-        self.store_pay_payment_method('Credit Card')
-        #add shipping address to the transaction before we redirect to PayPal
-        self.add_shipping_address_to_tran(
-            pay_key=pay_key,
-            shipping_address=self.get_shipping_address(self.basket))
-        return redirect_url
-
-class SuccessResponseView(PaymentSourceMixin, PaymentDetailsView):
-    has_error = False
-    preview = True
-
-    def get_pay_key(self):
-        self.pay_key = self.checkout_session.get_pay_key()
-
-    def post(self, request, *args, **kwargs):
-        """
-        We only support GET request
-        """
-        return HttpResponseNotAllowed(permitted_methods='GET')
-
-    def get(self, request, *args, **kwargs):
-        """
-        Place an order.
-
-        We fetch the txn details again and then proceed with oscar's standard
-        payment details view for placing the order.
-        """
-        error_msg = _(
-            "A problem occurred communicating with PayPal "
-            "- please try again later"
-        )
-
-        self.get_pay_key()
-        if self.pay_key is None:
-            #Some PayPal transactions redirect more than once to this page
-            #in the second time the pay_key will not be in session so we can continue
-            #with the flow
-            return HttpResponseRedirect(reverse('checkout:thank-you'))
-
-        # Reload frozen basket which is specified in the URL
-        basket = self.load_frozen_basket(kwargs['basket_id'])
-        if not basket:
-            logger.error("SuccessResponseView: no basket found")
-            messages.error(self.request, error_msg)
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-
-        submission = self.build_submission(basket=basket)
-        try:
-            self.submit(**submission)
-        except ValueError:
-            #Order already exists, continue with the regular flow
-            pass
-        #we don't display the error message here but we redirect to
-        #pending packages page
-        if self.has_error:
-            logger.critical("SuccessResponseView, error in submitting the order, the paypal transaction"
-                            " has already been carried")
-            return HttpResponseRedirect(reverse('customer:pending-packages'))
-        #Order placement process has successfully finished,
-        #redirect to thank you page
-        return HttpResponseRedirect(reverse('checkout:thank-you'))
-
-    def get_payment_method(self):
-        return self.checkout_session.get_pay_payment_method()
-
     def handle_payment(self, order_number, total, **kwargs):
         """
         Save order related data into DB
@@ -460,35 +335,52 @@ class SuccessResponseView(PaymentSourceMixin, PaymentDetailsView):
         3 - self_share = USendHome's share
         """
         # Record payment source and event
-        partner_share = self.get_partner_share()
-        payment_method = self.get_payment_method()
-        partner_payment_settings = self.get_partner_payment_settings()
-        source_type, is_created = SourceType.objects.get_or_create(name='PayPal')
+        partner_share, _ = self.get_partner_payment_info(self.basket)
+        source_type, _ = SourceType.objects.get_or_create(name='PayPal')
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),
                         amount_allocated=total.incl_tax,
                         amount_debited=total.incl_tax,
                         partner_share=partner_share,
                         self_share=total.incl_tax - partner_share,
-                        partner_paid_shipping_costs=partner_payment_settings['paid_shipping_costs'],
-                        partner_paid_shipping_insurance=partner_payment_settings['paid_shipping_insurance'],
-                        reference=self.pay_key,
-                        label=payment_method)
+                        reference=kwargs['pay_key'],
+                        label='PayPal')
         self.add_payment_source(source)
         self.add_payment_event('Settled', total.incl_tax)
-        #delete partner's share from session
-        self.checkout_session.delete_partner_share()
-        #delete the paypal_ap attributes from session
-        self.checkout_session.delete_paypal_ap()
+
+
+class SuccessResponseView(CheckoutSessionMixin, generic.RedirectView):
+    def post(self, request, *args, **kwargs):
+        """
+        We only support GET request
+        """
+        return HttpResponseNotAllowed(permitted_methods='GET')
+
+    def get(self, request, *args, **kwargs):
+        #Order placement process has successfully finished
+        # Flush all session data
+        self.checkout_session.flush()
+        #redirect to thank you page
+        return HttpResponseRedirect(reverse('checkout:thank-you'))
+
+    def get_payment_method(self):
+        return self.checkout_session.get_pay_payment_method()
 
 
 class CancelResponseView(generic.RedirectView):
     permanent = False
 
+    def delete_order(self, basket_id):
+        """
+        This function deletes the peding order
+        """
+        Order.objects.filter(basket_id=basket_id).delete()
+
     def get(self, request, *args, **kwargs):
         basket = get_object_or_404(Basket, id=kwargs['basket_id'],
-                                   status=Basket.FROZEN)
+                                   status=Basket.SUBMITTED)
         basket.thaw()
+        self.delete_order(kwargs['basket_id'])
         logger.info("Payment cancelled - basket #%s thawed", basket.id)
         return super(CancelResponseView, self).get(request, *args, **kwargs)
 

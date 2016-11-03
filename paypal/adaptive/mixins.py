@@ -27,8 +27,6 @@ class PaymentSourceMixin(CheckoutSessionMixin):
                 return HttpResponseRedirect(reverse('customer:pending-packages'))
         return super(PaymentSourceMixin, self).dispatch(request, *args, **kwargs)
 
-    def store_partner_payment_settings(self, settings):
-        self.checkout_session.store_partner_payment_settings(settings)
 
     def get_selected_shipping_method(self):
         key = self.package.upc
@@ -74,7 +72,23 @@ class PaymentSourceMixin(CheckoutSessionMixin):
                 discount += voucher['discount']
         return discount
 
-    def calc_partner_share(self, partner_order_payment_settings):
+    def get_partner_payment_info(self, basket):
+        """
+        This functions returns:
+            1 - partner share
+            2 - partner_payment_settings
+        """
+        partner = self.package.stockrecords.all().prefetch_related(
+            'partner', 'partner__payments_settings')[0].partner
+        partner_order_payment_settings = partner.active_payment_settings
+        parnter_share = D('0.0')
+
+        if partner_order_payment_settings:
+            parnter_share += self.calc_partner_share(basket, partner_order_payment_settings)
+
+        return parnter_share, partner_order_payment_settings
+
+    def calc_partner_share(self, basket, partner_order_payment_settings):
         """
         Partner's share is calculated as follows:
         1 - Payment for the shipping is made through partner's account so we need to pay him back
@@ -92,11 +106,6 @@ class PaymentSourceMixin(CheckoutSessionMixin):
         shipping_discounts = self.get_shipping_discounts()
         #service discounts is all_discounts - shipping_discounts
         services_discounts = self.basket.total_discount - shipping_discounts
-
-        partner_payment_settings = {
-            'paid_shipping_costs': False,
-            'paid_shipping_insurance': False
-        }
 
         #selected shipping method is not available for prepaid return labels
         if not self.checkout_session.is_return_to_store_prepaid_enabled():
@@ -123,7 +132,6 @@ class PaymentSourceMixin(CheckoutSessionMixin):
                 #check if partner pays for shipping insurance
                 if partner_order_payment_settings.is_paying_shipping_insurance:
                     partner_share += selected_method.shipping_insurance_base_rate()
-                    partner_payment_settings['paid_shipping_insurance'] = True
 
             shipping_charge_incl_revenue = selected_method.shipping_method_cost()
             #if partner pays for postage we need to transfer him the postage costs
@@ -132,7 +140,6 @@ class PaymentSourceMixin(CheckoutSessionMixin):
             if partner_order_payment_settings.postage_paid_by_partner(selected_method.carrier):
                 partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
                 partner_share += selected_method.partner_postage_cost() + partner_bank_fee
-                partner_payment_settings['paid_shipping_costs'] = True
             else:
                 partner_share += D('0.3')
 
@@ -140,7 +147,6 @@ class PaymentSourceMixin(CheckoutSessionMixin):
         if not partner_order_payment_settings.are_shipping_offers_apply:
             shipping_discounts = D('0.0')
 
-        self.store_partner_payment_settings(partner_payment_settings)
         #Calculate shipping margin, we decrease easypost charge and any shipping discounts
         shipping_revenue = shipping_margin - easypost_charge - shipping_discounts
         shipping_revenue = D('0.0') if shipping_revenue < D('0.0') else shipping_revenue
@@ -155,33 +161,27 @@ class PaymentSourceMixin(CheckoutSessionMixin):
         #Calculate partner's share that consists of 2 parts: shipping revenue and services revenue
         partner_share += ( (shipping_revenue * partner_order_payment_settings.shipping_margin) +
                            (services_revenue * partner_order_payment_settings.services_margin) ) / D('100.0')
+
+        if partner_share > basket.total_incl_tax:
+            return basket.total_incl_tax
+
         return partner_share.quantize(TWO_PLACES, rounding=ROUND_FLOOR)
 
-    def store_partner_share(self, share):
-        """
-        we save partner's share in session so we could audit it in db
-        once payment completes
-        """
-        self.checkout_session.store_partner_share(share)
-
-    def get_partner_share(self):
-        """
-        We would like to save in db the amount we've payed our partner
-        we keep that saved under the 'partner_share' attribute
-        """
-        return self.checkout_session.get_partner_share()
-
-    def get_partner_payment_settings(self):
-        return self.checkout_session.get_partner_payment_settings()
-
-    def store_pay_payment_method(self, payment_method):
-        """
-        PayPal Account, Credit Card or Bitcoin
-        """
-        self.checkout_session.store_pay_payment_method(payment_method)
 
     # Warning: This method can be removed when we drop support for Oscar 0.6
     def get_error_response(self):
         # We bypass the normal session checks for shipping address and shipping
         # method as they don't apply here.
         pass
+
+    def handle_successful_order(self, order):
+        """
+        We don't want to shoot the email confirmation just yet, so
+        here we do all the order processing stuff
+        """
+        # Save order id in session so thank-you page can load it
+        self.request.session['checkout_order_id'] = order.id
+        #send the post_checkout signal
+        self.view_signal.send(
+            sender=self, order=order, user=self.request.user,
+            request=self.request, response=None, package=self.package)
