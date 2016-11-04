@@ -350,21 +350,17 @@ class RedirectView(PaymentSourceMixin,
 
 
 class SuccessResponseView(CheckoutSessionMixin, generic.RedirectView):
-    def post(self, request, *args, **kwargs):
-        """
-        We only support GET request
-        """
-        return HttpResponseNotAllowed(permitted_methods='GET')
+    permanent = False
 
     def get(self, request, *args, **kwargs):
         #Order placement process has successfully finished
         # Flush all session data
         self.checkout_session.flush()
-        #redirect to thank you page
-        return HttpResponseRedirect(reverse('checkout:thank-you'))
+        return super(SuccessResponseView, self).get(request, *args, **kwargs)
 
-    def get_payment_method(self):
-        return self.checkout_session.get_pay_payment_method()
+    def get_redirect_url(self, **kwargs):
+        #redirect to thank you page
+        return reverse('checkout:thank-you')
 
 
 class CancelResponseView(generic.RedirectView):
