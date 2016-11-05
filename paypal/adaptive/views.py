@@ -55,11 +55,7 @@ class RedirectView(PaymentSourceMixin,
         except PayPalError:
             messages.error(
                 self.request, _("An error occurred communicating with PayPal"))
-            if self.as_payment_method:
-                url = reverse('checkout:payment-details')
-            else:
-                url = reverse('customer:pending-packages')
-            return url
+            return reverse('customer:pending-packages')
         except InvalidBasket as e:
             messages.warning(self.request, six.text_type(e))
             return reverse('customer:pending-packages')
@@ -131,9 +127,10 @@ class RedirectView(PaymentSourceMixin,
             params['action'] = 'PAY_PRIMARY'
 
     def add_shipping_address_to_tran(self, pay_key, shipping_address):
-        set_transaction_details(
-            pay_key=pay_key,
-            shipping_address=shipping_address)
+        if shipping_address:
+            set_transaction_details(
+                pay_key=pay_key,
+                shipping_address=shipping_address)
 
     def _get_redirect_url(self, **kwargs):
         if self.basket.is_empty:

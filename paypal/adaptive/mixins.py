@@ -184,4 +184,7 @@ class PaymentSourceMixin(CheckoutSessionMixin):
         #send the post_checkout signal
         self.view_signal.send(
             sender=self, order=order, user=self.request.user,
-            request=self.request, response=None, package=self.package)
+            request=self.request, response=None, package=self.package,
+            is_return_to_store=self.checkout_session.is_return_to_store_enabled(),
+            shipping_label_id=self.checkout_session.get_shipping_label_id()
+        )
