@@ -106,7 +106,8 @@ class RedirectView(PaymentSourceMixin,
             }
         ]
 
-        partner_share, partner_payment_settings = self.get_partner_payment_info(self.basket)
+        partner_share, partner_payment_settings = self.get_partner_payment_info(
+            self.basket, payment_processor='PayPal')
         if partner_share > 0:
             receivers.append({
                 'email': partner_payment_settings.billing_email,
@@ -332,7 +333,7 @@ class RedirectView(PaymentSourceMixin,
         3 - self_share = USendHome's share
         """
         # Record payment source and event
-        partner_share, _ = self.get_partner_payment_info(self.basket)
+        partner_share, _ = self.get_partner_payment_info(self.basket, payment_processor='PayPal')
         source_type, _ = SourceType.objects.get_or_create(name='PayPal')
         source = Source(source_type=source_type,
                         currency=getattr(settings, 'PAYPAL_CURRENCY', 'USD'),

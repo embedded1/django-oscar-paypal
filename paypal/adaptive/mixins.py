@@ -72,7 +72,7 @@ class PaymentSourceMixin(CheckoutSessionMixin):
                 discount += voucher['discount']
         return discount
 
-    def get_partner_payment_info(self, basket):
+    def get_partner_payment_info(self, basket, payment_processor):
         """
         This functions returns:
             1 - partner share
@@ -80,15 +80,15 @@ class PaymentSourceMixin(CheckoutSessionMixin):
         """
         partner = self.package.stockrecords.all().prefetch_related(
             'partner', 'partner__payments_settings')[0].partner
-        partner_order_payment_settings = partner.active_payment_settings
+        partner_payment_settings = partner.active_payment_settings
         parnter_share = D('0.0')
 
-        if partner_order_payment_settings:
-            parnter_share += self.calc_partner_share(basket, partner_order_payment_settings)
+        if partner_payment_settings:
+            parnter_share += self.calc_partner_share(basket, partner_payment_settings, payment_processor)
 
-        return parnter_share, partner_order_payment_settings
+        return parnter_share, partner_payment_settings
 
-    def calc_partner_share(self, basket, partner_order_payment_settings):
+    def calc_partner_share(self, basket, partner_payment_settings, payment_processor):
         """
         Partner's share is calculated as follows:
         1 - Payment for the shipping is made through partner's account so we need to pay him back
@@ -116,35 +116,47 @@ class PaymentSourceMixin(CheckoutSessionMixin):
                 logger.error("couldn't get selected shipping method from cache")
                 raise GeneralException()
 
+            partner_paid_for_postage = partner_payment_settings.postage_paid_by_partner(selected_method.carrier)
             easypost_charge = D('0.05')
             shipping_margin = selected_method.shipping_revenue
 
+            #check if shipping insurance is needed
+            if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
+                insurance_charge_incl_revenue = selected_method.shipping_insurance_cost()
+                #check if partner pays for shipping insurance
+                if partner_payment_settings.is_paying_shipping_insurance:
+                    partner_share += selected_method.shipping_insurance_base_rate()
+
+            shipping_charge_incl_revenue = selected_method.shipping_method_cost()
+
             bank_fee_line = self.basket.get_item_at_position(settings.BANK_FEE_POSITION)
+
             if bank_fee_line is None:
                 logger.error("couldn't get bank fee line from basket")
                 raise GeneralException()
 
             bank_fee = bank_fee_line.price_incl_tax
 
-            #check if shipping insurance is needed
-            if self.basket.contains_line_at_position(settings.INSURANCE_FEE_POSITION):
-                insurance_charge_incl_revenue = selected_method.shipping_insurance_cost()
-                #check if partner pays for shipping insurance
-                if partner_order_payment_settings.is_paying_shipping_insurance:
-                    partner_share += selected_method.shipping_insurance_base_rate()
-
-            shipping_charge_incl_revenue = selected_method.shipping_method_cost()
             #if partner pays for postage we need to transfer him the postage costs
             #and the bank fee we received for the postage, which is the bank_fee - 0.3
             #otherwise, we only transfer him 0.3
-            if partner_order_payment_settings.postage_paid_by_partner(selected_method.carrier):
-                partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
-                partner_share += selected_method.partner_postage_cost() + partner_bank_fee
+            #for bitcoin transactions we receive the whole bank fee
+            if payment_processor == 'PayPal':
+                if partner_paid_for_postage:
+                    partner_bank_fee = (bank_fee - D('0.3')) if bank_fee > D('0.3') else D('0.0')
+                else:
+                    partner_bank_fee = D('0.3')
             else:
-                partner_share += D('0.3')
+                partner_bank_fee = D('0.0')
+
+            partner_share += partner_bank_fee
+
+            #add postage charges if partner is paying for it
+            if partner_paid_for_postage:
+                partner_share += selected_method.partner_postage_cost()
 
         #zero out the shipping discounts if they don't apply to partner
-        if not partner_order_payment_settings.are_shipping_offers_apply:
+        if not partner_payment_settings.are_shipping_offers_apply:
             shipping_discounts = D('0.0')
 
         #Calculate shipping margin, we decrease easypost charge and any shipping discounts
@@ -159,8 +171,8 @@ class PaymentSourceMixin(CheckoutSessionMixin):
                            no_revenues - services_discounts - bank_fee
         services_revenue = D('0.0') if services_revenue < D('0.0') else services_revenue
         #Calculate partner's share that consists of 2 parts: shipping revenue and services revenue
-        partner_share += ( (shipping_revenue * partner_order_payment_settings.shipping_margin) +
-                           (services_revenue * partner_order_payment_settings.services_margin) ) / D('100.0')
+        partner_share += ( (shipping_revenue * partner_payment_settings.shipping_margin) +
+                           (services_revenue * partner_payment_settings.services_margin) ) / D('100.0')
 
         if partner_share > basket.total_incl_tax:
             return basket.total_incl_tax
