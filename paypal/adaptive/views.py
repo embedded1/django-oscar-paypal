@@ -156,6 +156,9 @@ class RedirectView(PaymentSourceMixin,
         #                         return_to_merchant=is_return_to_merchant):
         #    raise PayPalFailedValidationException()
 
+        #apply tax (if required) before we redirect
+        self.apply_tax(self.request.user, self.basket)
+
         params = {
             'basket': self.basket,
             #'sender_email': self.request.user.email
@@ -361,12 +364,12 @@ class SuccessResponseView(CheckoutSessionMixin, generic.RedirectView):
         return reverse('checkout:thank-you')
 
 
-class CancelResponseView(generic.RedirectView):
+class CancelResponseView(CheckoutSessionMixin, generic.RedirectView):
     permanent = False
 
     def delete_order(self, basket_id):
         """
-        This function deletes the peding order
+        This function deletes the pending order
         """
         Order.objects.filter(basket_id=basket_id).delete()
 
@@ -374,6 +377,8 @@ class CancelResponseView(generic.RedirectView):
         basket = get_object_or_404(Basket, id=kwargs['basket_id'],
                                    status=Basket.SUBMITTED)
         basket.thaw()
+        # Flush all session data
+        self.checkout_session.flush()
         self.delete_order(kwargs['basket_id'])
         logger.info("Payment cancelled - basket #%s thawed", basket.id)
         return super(CancelResponseView, self).get(request, *args, **kwargs)

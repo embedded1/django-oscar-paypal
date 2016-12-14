@@ -200,3 +200,16 @@ class PaymentSourceMixin(CheckoutSessionMixin):
             is_return_to_store=self.checkout_session.is_return_to_store_enabled(),
             shipping_label_id=self.checkout_session.get_shipping_label_id()
         )
+
+    def apply_tax(self, user, basket):
+        profile = user.get_profile()
+        if profile.country == 'ISR':
+            for line in basket.all_lines():
+                line_tax = self.calculate_tax(
+                    line.line_price_excl_tax_incl_discounts, D('0.17'))
+                unit_tax = (line_tax / line.quantity).quantize(D('0.01'))
+                line.purchase_info.price.tax = unit_tax
+
+    def calculate_tax(self, price, rate):
+        tax = price * rate
+        return tax.quantize(D('0.01'))
