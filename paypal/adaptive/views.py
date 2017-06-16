@@ -83,6 +83,7 @@ class RedirectView(PaymentSourceMixin,
             submission = self.build_submission()
             #add token
             submission['payment_kwargs'] = {'pay_key': pay_key}
+            submission['order_kwargs'] = {'ga_client_id': self.request.POST.get('client-id')}
             self.submit(**submission)
             logger.info("Basket #%s - redirecting to %s", self.basket.id, url)
             return url
